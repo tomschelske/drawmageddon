@@ -30,7 +30,10 @@
       padding: 36px;
       width: 100%;
       max-width: 440px;
+      transition: max-width 0.2s ease;
     }
+
+    .card.wide { max-width: 780px; }
 
     h1 {
       font-size: 30px;
@@ -175,6 +178,88 @@
       padding: 0 8px;
     }
 
+    /* Drawing phase */
+    .draw-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 12px;
+    }
+
+    .draw-header .winning-prompt { flex: 1; margin-bottom: 0; padding: 10px 14px; }
+
+    #draw-timer {
+      font-variant-numeric: tabular-nums;
+      font-size: 22px; font-weight: 800;
+      background: #18181b; color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      min-width: 84px;
+      text-align: center;
+    }
+
+    #draw-timer.urgent { background: #dc2626; animation: pulse 1s infinite; }
+
+    @keyframes pulse {
+      50% { transform: scale(1.06); }
+    }
+
+    #draw-canvas {
+      width: 100%;
+      height: auto;
+      border: 2px solid #e4e4e7;
+      border-radius: 12px;
+      background: #fff;
+      cursor: crosshair;
+      touch-action: none;
+      display: block;
+    }
+
+    .draw-toolbar {
+      display: flex; align-items: center; gap: 14px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+
+    #draw-colors { display: flex; gap: 6px; flex-wrap: wrap; }
+
+    .swatch {
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      border: 2px solid #d4d4d8;
+      padding: 0;
+    }
+
+    .swatch.selected { border-color: #18181b; transform: scale(1.15); }
+
+    #draw-sizes { display: flex; gap: 6px; }
+
+    .brush {
+      width: 34px; height: 34px;
+      border-radius: 8px;
+      border: 2px solid #d4d4d8;
+      background: #fafafa;
+      padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+    }
+
+    .brush.selected { border-color: #18181b; background: #fffbeb; }
+
+    .brush-dot { background: #18181b; border-radius: 50%; display: block; }
+
+    .draw-actions { display: flex; gap: 8px; margin-left: auto; }
+
+    .draw-actions button, #btn-submit-drawing {
+      margin-top: 0;
+    }
+
+    .ghost {
+      background: #f4f4f5; color: #3f3f46;
+    }
+
+    .ghost:hover { background: #e4e4e7; }
+
+    #btn-submit-drawing { width: auto; background: #16a34a; color: #fff; }
+    #btn-submit-drawing:hover { background: #15803d; }
+
     /* Toast for in-game errors */
     #toast {
       position: fixed;
@@ -249,6 +334,34 @@
       <p id="vote-hint" class="lobby-meta"></p>
       <div id="vote-prompts"></div>
       <p id="vote-progress" class="progress-note"></p>
+    </section>
+
+    <!-- Drawing phase -->
+    <section id="screen-draw" class="hidden">
+      <div class="draw-header">
+        <div class="winning-prompt">“<span id="draw-prompt"></span>”</div>
+        <div id="draw-timer">–:––</div>
+      </div>
+
+      <div id="draw-workspace">
+        <canvas id="draw-canvas" width="700" height="500"></canvas>
+        <div class="draw-toolbar">
+          <div id="draw-colors"></div>
+          <div id="draw-sizes"></div>
+          <div class="draw-actions">
+            <button id="btn-undo" class="ghost">Undo</button>
+            <button id="btn-clear" class="ghost">Clear</button>
+            <button id="btn-submit-drawing">Submit drawing</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="draw-waiting" class="hidden">
+        <p class="wait-note">Masterpiece delivered! Waiting for the other artists…</p>
+      </div>
+
+      <p id="draw-progress" class="progress-note"></p>
+      <ul id="draw-players"></ul>
     </section>
 
     <!-- In-game (placeholder until phase UIs land) -->

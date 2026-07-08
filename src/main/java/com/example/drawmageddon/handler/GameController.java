@@ -22,6 +22,7 @@ public class GameController {
     public record JoinRequest(String name) {}
     public record PromptSubmission(String text) {}
     public record VoteRequest(String promptId) {}
+    public record DrawingSubmission(String imageData) {}
 
     private final RoomManager roomManager;
     private final GameService gameService;
@@ -79,6 +80,13 @@ public class GameController {
                            VoteRequest vote,
                            SimpMessageHeaderAccessor headerAccessor) {
         gameService.votePrompt(roomCode, principal(headerAccessor), vote.promptId());
+    }
+
+    @MessageMapping("/room/{roomCode}/drawing")
+    public void submitDrawing(@DestinationVariable String roomCode,
+                              DrawingSubmission submission,
+                              SimpMessageHeaderAccessor headerAccessor) {
+        gameService.submitDrawing(roomCode, principal(headerAccessor), submission.imageData());
     }
 
     private String principal(SimpMessageHeaderAccessor headerAccessor) {

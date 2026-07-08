@@ -4,9 +4,11 @@ import com.example.drawmageddon.model.GameEvent;
 import com.example.drawmageddon.model.GamePhase;
 import com.example.drawmageddon.model.Prompt;
 import com.example.drawmageddon.model.Room;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.messaging.simp.SimpMessagingTemplate;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -37,15 +39,27 @@ class GameServiceTest {
         }
     }
 
+    private static final String TINY_PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
     private RoomManager roomManager;
     private RecordingMessaging messaging;
     private GameService service;
+    private ThreadPoolTaskScheduler scheduler;
 
     @BeforeEach
     void setUp() {
         roomManager = new RoomManager();
         messaging = new RecordingMessaging();
-        service = new GameService(roomManager, new SessionRegistry(), new GameEvents(messaging));
+        scheduler = new ThreadPoolTaskScheduler();
+        scheduler.initialize();
+        // 90s drawing timer: far enough out that only explicit force-close fires in tests
+        service = new GameService(roomManager, new SessionRegistry(), new GameEvents(messaging),
+                scheduler, 90);
+    }
+
+    @AfterEach
+    void tearDown() {
+        scheduler.shutdown();
     }
 
     private Room roomWithPlayers(String... names) {
@@ -199,6 +213,87 @@ class GameServiceTest {
         Room room = startedGame("Alice", "Bob", "Carol");
         service.votePrompt(room.getRoomCode(), "p1", "anything");
         expectPersonalError("p1", "WRONG_PHASE");
+    }
+
+    // --- Drawing phase ---
+
+    /** Drive a 3-player game to the DRAWING phase; p1's prompt wins. */
+    private Room gameInDrawingPhase() {
+        Room room = startedGame("Alice", "Bob", "Carol");
+        service.submitPrompt(room.getRoomCode(), "p1", "prompt A");
+        service.submitPrompt(room.getRoomCode(), "p2", "prompt B");
+        service.submitPrompt(room.getRoomCode(), "p3", "prompt C");
+        String promptA = ownPromptIds(room).get("p1");
+        service.votePrompt(room.getRoomCode(), "p1", promptA);
+        service.votePrompt(room.getRoomCode(), "p2", promptA);
+        service.votePrompt(room.getRoomCode(), "p3", promptA);
+        assertEquals(GamePhase.DRAWING, room.getPhase());
+        return room;
+    }
+
+    @Test
+    void drawingPhaseHasADeadlineAndCollectsAllDrawings() {
+        Room room = gameInDrawingPhase();
+        assertNotNull(room.getPhaseDeadline(), "drawing phase must be timer-bound");
+
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+        service.submitDrawing(room.getRoomCode(), "p2", TINY_PNG);
+        assertEquals(GamePhase.DRAWING, room.getPhase());
+
+        service.submitDrawing(room.getRoomCode(), "p3", TINY_PNG);
+        assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
+        assertEquals(3, room.getDrawings().size());
+        assertNull(room.getPhaseDeadline(), "deadline cleared once the phase closes");
+    }
+
+    @Test
+    void invalidOrDuplicateDrawingsAreRejected() {
+        Room room = gameInDrawingPhase();
+
+        service.submitDrawing(room.getRoomCode(), "p1", "data:image/jpeg;base64,xxxx");
+        expectPersonalError("p1", "INVALID_DRAWING");
+
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+        expectPersonalError("p1", "ALREADY_SUBMITTED");
+        assertEquals(1, room.getDrawings().size());
+    }
+
+    @Test
+    void drawingBeforeDrawingPhaseIsRejected() {
+        Room room = startedGame("Alice", "Bob", "Carol");
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+        expectPersonalError("p1", "WRONG_PHASE");
+        assertTrue(room.getDrawings().isEmpty());
+    }
+
+    @Test
+    void forceCloseAdvancesWithoutTheStragglers() {
+        Room room = gameInDrawingPhase();
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+
+        service.forceCloseDrawing(room);
+        assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
+        assertEquals(1, room.getDrawings().size());
+
+        // Late submission after the phase closed is rejected
+        service.submitDrawing(room.getRoomCode(), "p2", TINY_PNG);
+        expectPersonalError("p2", "WRONG_PHASE");
+    }
+
+    @Test
+    void drawingPhaseClosesWhenTheLastHoldoutDisconnects() {
+        Room room = gameInDrawingPhase();
+        service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
+        service.submitDrawing(room.getRoomCode(), "p2", TINY_PNG);
+
+        room.getSessions().remove("p3");
+        room.getActiveNames().remove("p3");
+        room.getClaimedNames().remove("carol");
+        service.playerLeft(room);
+
+        assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
+        assertEquals(2, room.getDrawings().size());
     }
 
     // --- Disconnects mid-phase ---

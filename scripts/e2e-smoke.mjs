@@ -3,8 +3,12 @@
 //
 //   PORT=8085 node scripts/e2e-smoke.mjs
 //
-// Covers the lobby + Phase 1 flow: join validation, host controls, prompt
-// submission, live-tally voting, tie-break resolution, and disconnects.
+// Covers the lobby + Phase 1 + Phase 2 flow: join validation, host controls,
+// prompt submission, live-tally voting, tie-break resolution, disconnects,
+// and timer-bound drawing submission.
+//
+// The timer-expiry scenario needs a short drawing timer; start the server with
+// GAME_DRAWING_SECONDS=4 to enable it (it is skipped otherwise).
 import { Client } from '../frontend/node_modules/@stomp/stompjs/esm6/index.js';
 
 const PORT = process.env.PORT ?? '8080';
@@ -60,6 +64,8 @@ async function createRoom() {
   const { roomCode } = await res.json();
   return roomCode;
 }
+
+const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 // --- Scenario 1: lobby rules + full Phase 1 flow with a clear majority ---
 {
@@ -121,6 +127,25 @@ async function createRoom() {
   check('vote closes into DRAWING with the majority prompt',
     final?.phase === 'DRAWING' && final?.winningPrompt === target.text);
   check('ballot tallies are absent outside voting phase', final?.prompts === undefined);
+  check('drawing phase broadcasts a countdown',
+    typeof final?.phaseRemainingMillis === 'number' && final.phaseRemainingMillis > 0);
+
+  // Drawings
+  send(alice, roomCode, 'drawing', { imageData: 'data:image/jpeg;base64,nope' });
+  await sleep(250);
+  check('non-PNG drawing rejected (INVALID_DRAWING)', hasError(alice, 'INVALID_DRAWING'));
+
+  send(alice, roomCode, 'drawing', { imageData: TINY_PNG });
+  send(bob, roomCode, 'drawing', { imageData: TINY_PNG });
+  await sleep(250);
+  check('still DRAWING until every drawing is in',
+    alice.states.at(-1)?.phase === 'DRAWING' &&
+    alice.states.at(-1)?.players.filter((p) => p.done).length === 2);
+
+  send(carol, roomCode, 'drawing', { imageData: TINY_PNG });
+  await sleep(300);
+  check('all drawings in closes the phase into BRACKET_VOTING',
+    [alice, bob, carol].every((p) => p.states.at(-1)?.phase === 'BRACKET_VOTING'));
 
   for (const p of [alice, bob, carol, dup]) p.client.deactivate();
 }
@@ -161,6 +186,41 @@ async function createRoom() {
     ['prompt A', 'prompt B', 'prompt C'].includes(final?.winningPrompt));
 
   for (const p of [alice, bob, carol]) p.client.deactivate();
+}
+
+// --- Scenario 3: drawing deadline force-closes the phase (needs GAME_DRAWING_SECONDS=4) ---
+if (process.env.GAME_DRAWING_SECONDS === '4') {
+  const roomCode = await createRoom();
+  console.log('\nscenario 3 — drawing timer expiry (room', roomCode + ')');
+
+  const alice = await join(roomCode, 'Alice');
+  const bob = await join(roomCode, 'Bob');
+  const carol = await join(roomCode, 'Carol');
+  send(alice, roomCode, 'start');
+  await sleep(250);
+  send(alice, roomCode, 'prompt', { text: 'prompt A' });
+  send(bob, roomCode, 'prompt', { text: 'prompt B' });
+  send(carol, roomCode, 'prompt', { text: 'prompt C' });
+  await sleep(250);
+  const ballot = alice.states.at(-1).prompts;
+  for (const p of [alice, bob, carol]) send(p, roomCode, 'vote', { promptId: ballot[0].id });
+  await sleep(300);
+  check('reached DRAWING', alice.states.at(-1)?.phase === 'DRAWING');
+
+  // Only two of three submit; Carol never does
+  send(alice, roomCode, 'drawing', { imageData: TINY_PNG });
+  send(bob, roomCode, 'drawing', { imageData: TINY_PNG });
+  await sleep(500);
+  check('phase stays open waiting for Carol', alice.states.at(-1)?.phase === 'DRAWING');
+
+  // 4s timer + 3s server grace → closed by ~8s
+  await sleep(8000);
+  check('server force-closes the drawing phase at the deadline',
+    [alice, bob, carol].every((p) => p.states.at(-1)?.phase === 'BRACKET_VOTING'));
+
+  for (const p of [alice, bob, carol]) p.client.deactivate();
+} else {
+  console.log('\nscenario 3 skipped (set GAME_DRAWING_SECONDS=4 on the server to enable)');
 }
 
 const failed = results.filter(([, ok]) => !ok);

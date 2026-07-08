@@ -43,6 +43,14 @@ public class Room {
 
     private volatile Prompt winningPrompt;
 
+    // --- Phase 2: drawing (mutate only while synchronized on this room) ---
+
+    // ownerId → their submitted drawing (one per player, final once submitted)
+    private final ConcurrentHashMap<String, Drawing> drawings = new ConcurrentHashMap<>();
+
+    // when the current timed phase ends (null when the phase has no timer)
+    private volatile Instant phaseDeadline;
+
     public Room(String roomCode) {
         this.roomCode = roomCode;
         this.createdAt = Instant.now();
@@ -65,6 +73,9 @@ public class Room {
     public ConcurrentHashMap<String, String> getPromptVotes() { return promptVotes; }
     public Prompt getWinningPrompt() { return winningPrompt; }
     public void setWinningPrompt(Prompt p) { this.winningPrompt = p; }
+    public ConcurrentHashMap<String, Drawing> getDrawings() { return drawings; }
+    public Instant getPhaseDeadline() { return phaseDeadline; }
+    public void setPhaseDeadline(Instant deadline) { this.phaseDeadline = deadline; }
 
     public int presenceCount() { return activeNames.size(); }
 }

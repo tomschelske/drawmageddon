@@ -1,3 +1,4 @@
+import { createDrawingTool, type DrawingTool } from './canvas';
 import { connect, type Connection } from './net';
 import type { GameEvent, GamePhase, RoomStateView } from './types';
 
@@ -9,6 +10,12 @@ let roomCode = '';
 let lastState: RoomStateView | null = null;
 let myVote: string | null = null; // promptId I voted for (highlighting only; server is authoritative)
 
+// Drawing phase
+let drawTool: DrawingTool | null = null;
+let drawingSubmitted = false;
+let drawDeadline: number | null = null; // local-clock timestamp
+let drawTimer: number | undefined;
+
 // --- DOM helpers ---
 
 function el<T extends HTMLElement>(id: string): T {
@@ -17,13 +24,15 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const screens = ['home', 'lobby', 'submit', 'vote', 'game'] as const;
+const screens = ['home', 'lobby', 'submit', 'vote', 'draw', 'game'] as const;
 type Screen = (typeof screens)[number];
 
 function showScreen(name: Screen): void {
   for (const s of screens) {
     el(`screen-${s}`).classList.toggle('hidden', s !== name);
   }
+  // The drawing screen needs elbow room; everything else stays compact
+  document.querySelector('.card')?.classList.toggle('wide', name === 'draw');
 }
 
 function setError(message: string): void {
@@ -42,6 +51,7 @@ const ERROR_MESSAGES: Record<string, string> = {
   ALREADY_SUBMITTED: 'You already submitted a prompt.',
   ALREADY_VOTED: 'You already voted — votes are final!',
   INVALID_VOTE: 'That prompt is not on the ballot.',
+  INVALID_DRAWING: 'That drawing could not be submitted.',
 };
 
 // --- Rendering ---
@@ -142,12 +152,80 @@ function renderVote(state: RoomStateView): void {
   el('vote-progress').textContent = `${doneCount} of ${state.players.length} votes in`;
 }
 
+// --- Drawing phase ---
+
+function enterDrawingPhase(state: RoomStateView): void {
+  drawingSubmitted = false;
+  el('draw-prompt').textContent = state.winningPrompt ?? '';
+  drawTool?.destroy();
+  drawTool = createDrawingTool(el<HTMLCanvasElement>('draw-canvas'));
+  // Reset toolbar to defaults
+  selectSwatch(el('draw-colors').querySelector<HTMLElement>('[data-color="#18181b"]'));
+  selectBrush(el('draw-sizes').querySelector<HTMLElement>('[data-size="5"]'));
+}
+
+function submitDrawing(): void {
+  if (drawingSubmitted || !drawTool) return;
+  drawingSubmitted = true;
+  conn?.send(`/app/room/${roomCode}/drawing`, { imageData: drawTool.snapshot() });
+  syncDrawScreen();
+}
+
+function stopDrawTimer(): void {
+  clearInterval(drawTimer);
+  drawTimer = undefined;
+  drawDeadline = null;
+}
+
+function updateDrawTimer(): void {
+  if (drawDeadline === null) return;
+  const remaining = Math.max(0, drawDeadline - Date.now());
+  const seconds = Math.ceil(remaining / 1000);
+  el('draw-timer').textContent = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  el('draw-timer').classList.toggle('urgent', seconds <= 10);
+  if (remaining <= 0) {
+    stopDrawTimer();
+    // Auto-submit whatever is on the canvas, even if untouched
+    submitDrawing();
+  }
+}
+
+function syncDrawScreen(): void {
+  el('draw-workspace').classList.toggle('hidden', drawingSubmitted);
+  el('draw-waiting').classList.toggle('hidden', !drawingSubmitted);
+}
+
+function renderDraw(state: RoomStateView, phaseChanged: boolean): void {
+  if (phaseChanged) enterDrawingPhase(state);
+
+  // Refresh the local countdown from remaining-at-broadcast (skew-proof)
+  if (state.phaseRemainingMillis !== undefined && !drawingSubmitted) {
+    drawDeadline = Date.now() + state.phaseRemainingMillis;
+    if (drawTimer === undefined) {
+      drawTimer = window.setInterval(updateDrawTimer, 250);
+      updateDrawTimer();
+    }
+  }
+
+  // Trust the server if it already counted us as done (e.g. duplicate tab)
+  if (me(state)?.done) drawingSubmitted = true;
+  syncDrawScreen();
+
+  const doneCount = state.players.filter((p) => p.done).length;
+  el('draw-progress').textContent = `${doneCount} of ${state.players.length} drawings in`;
+  renderPlayerList('draw-players', state, true);
+}
+
 function renderState(state: RoomStateView): void {
   const previousPhase: GamePhase | null = lastState?.phase ?? null;
+  const phaseChanged = previousPhase !== state.phase;
   lastState = state;
 
-  if (previousPhase !== state.phase && state.phase === 'PROMPT_VOTING') {
+  if (phaseChanged && state.phase === 'PROMPT_VOTING') {
     myVote = null; // fresh ballot
+  }
+  if (phaseChanged && previousPhase === 'DRAWING') {
+    stopDrawTimer();
   }
 
   switch (state.phase) {
@@ -163,8 +241,12 @@ function renderState(state: RoomStateView): void {
       renderVote(state);
       showScreen('vote');
       break;
+    case 'DRAWING':
+      renderDraw(state, phaseChanged);
+      showScreen('draw');
+      break;
     default:
-      // DRAWING and beyond: placeholder until those phases land
+      // BRACKET_VOTING and RESULTS: placeholder until those phases land
       el('game-phase').textContent = state.phase.replace(/_/g, ' ');
       el('game-prompt').textContent = state.winningPrompt ?? '';
       el('game-prompt-wrap').classList.toggle('hidden', !state.winningPrompt);
@@ -214,8 +296,58 @@ function leaveToHome(message: string): void {
   conn = null;
   lastState = null;
   myVote = null;
+  stopDrawTimer();
+  drawTool?.destroy();
+  drawTool = null;
+  drawingSubmitted = false;
   setError(message);
   showScreen('home');
+}
+
+// --- Drawing toolbar ---
+
+const SWATCHES = ['#18181b', '#dc2626', '#f59e0b', '#facc15', '#16a34a',
+                  '#2563eb', '#7c3aed', '#ec4899', '#92400e', '#ffffff'];
+const BRUSH_SIZES = [2, 5, 12];
+
+function selectSwatch(target: HTMLElement | null): void {
+  if (!target) return;
+  el('draw-colors').querySelectorAll('.swatch').forEach((s) => s.classList.remove('selected'));
+  target.classList.add('selected');
+  drawTool?.setColor(target.dataset.color ?? '#18181b');
+}
+
+function selectBrush(target: HTMLElement | null): void {
+  if (!target) return;
+  el('draw-sizes').querySelectorAll('.brush').forEach((b) => b.classList.remove('selected'));
+  target.classList.add('selected');
+  drawTool?.setBrushSize(Number(target.dataset.size ?? 5));
+}
+
+function buildToolbar(): void {
+  const colors = el('draw-colors');
+  for (const color of SWATCHES) {
+    const swatch = document.createElement('button');
+    swatch.className = 'swatch';
+    swatch.dataset.color = color;
+    swatch.style.background = color;
+    swatch.title = color === '#ffffff' ? 'Eraser (white)' : '';
+    swatch.addEventListener('click', () => selectSwatch(swatch));
+    colors.appendChild(swatch);
+  }
+
+  const sizes = el('draw-sizes');
+  for (const size of BRUSH_SIZES) {
+    const brush = document.createElement('button');
+    brush.className = 'brush';
+    brush.dataset.size = String(size);
+    const dot = document.createElement('span');
+    dot.className = 'brush-dot';
+    dot.style.width = dot.style.height = `${Math.max(4, size)}px`;
+    brush.appendChild(dot);
+    brush.addEventListener('click', () => selectBrush(brush));
+    sizes.appendChild(brush);
+  }
 }
 
 // --- Actions ---
@@ -280,7 +412,15 @@ function wireUp(): void {
   el<HTMLInputElement>('input-prompt').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') el('btn-submit-prompt').click();
   });
+
+  el('btn-undo').addEventListener('click', () => drawTool?.undo());
+  el('btn-clear').addEventListener('click', () => drawTool?.clear());
+  el('btn-submit-drawing').addEventListener('click', () => {
+    stopDrawTimer();
+    submitDrawing();
+  });
 }
 
+buildToolbar();
 wireUp();
 showScreen('home');

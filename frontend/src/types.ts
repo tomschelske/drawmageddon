@@ -30,6 +30,8 @@ export interface RoomStateView {
   prompts?: PromptView[];
   /** Present once the prompt vote has resolved. */
   winningPrompt?: string;
+  /** Time left in the current timed phase, measured at broadcast; count down locally. */
+  phaseRemainingMillis?: number;
 }
 
 export interface GameEvent {

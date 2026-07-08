@@ -1,13 +1,19 @@
 package com.example.drawmageddon.service;
 
+import com.example.drawmageddon.model.Drawing;
 import com.example.drawmageddon.model.GameEvent;
 import com.example.drawmageddon.model.GamePhase;
 import com.example.drawmageddon.model.Prompt;
 import com.example.drawmageddon.model.Room;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.scheduling.TaskScheduler;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
@@ -15,6 +21,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ScheduledFuture;
 
 /**
  * Server-authoritative game logic. Clients only ever send intents (join,
@@ -27,20 +35,34 @@ public class GameService {
 
     public static final int MIN_PLAYERS_TO_START = 3;
     public static final int MAX_PROMPT_LENGTH = 140;
+    public static final String DRAWING_DATA_PREFIX = "data:image/png;base64,";
+    public static final int MAX_DRAWING_DATA_LENGTH = 500_000;
+
+    /** Clients auto-submit at the deadline; the server closes the phase this much later. */
+    static final Duration DRAWING_GRACE = Duration.ofSeconds(3);
 
     private static final Logger log = LoggerFactory.getLogger(GameService.class);
 
     private final RoomManager roomManager;
     private final SessionRegistry sessionRegistry;
     private final GameEvents events;
+    private final TaskScheduler gameScheduler;
+    private final Duration drawingDuration;
     private final Random random = new Random();
+
+    // roomCode → pending force-close task, cancelled if everyone submits early
+    private final ConcurrentHashMap<String, ScheduledFuture<?>> phaseTimers = new ConcurrentHashMap<>();
 
     public GameService(RoomManager roomManager,
                        SessionRegistry sessionRegistry,
-                       GameEvents events) {
+                       GameEvents events,
+                       @Qualifier("gameScheduler") TaskScheduler gameScheduler,
+                       @Value("${game.drawing-seconds:90}") int drawingSeconds) {
         this.roomManager = roomManager;
         this.sessionRegistry = sessionRegistry;
         this.events = events;
+        this.gameScheduler = gameScheduler;
+        this.drawingDuration = Duration.ofSeconds(drawingSeconds);
     }
 
     // --- Lobby ---
@@ -176,6 +198,50 @@ public class GameService {
         events.broadcastState(room);
     }
 
+    // --- Drawing ---
+
+    public void submitDrawing(String roomCode, String principal, String imageData) {
+        Room room = roomManager.findRoom(roomCode).orElse(null);
+        if (room == null) {
+            events.sendPersonal(principal, GameEvent.error("ROOM_NOT_FOUND"));
+            return;
+        }
+
+        synchronized (room) {
+            if (room.getPhase() != GamePhase.DRAWING) {
+                events.sendPersonal(principal, GameEvent.error("WRONG_PHASE"));
+                return;
+            }
+            if (!room.getActiveNames().containsKey(principal)) {
+                events.sendPersonal(principal, GameEvent.error("NOT_IN_ROOM"));
+                return;
+            }
+            if (imageData == null || !imageData.startsWith(DRAWING_DATA_PREFIX)
+                    || imageData.length() > MAX_DRAWING_DATA_LENGTH) {
+                events.sendPersonal(principal, GameEvent.error("INVALID_DRAWING"));
+                return;
+            }
+            Drawing drawing = new Drawing(UUID.randomUUID().toString(), principal, imageData);
+            if (room.getDrawings().putIfAbsent(principal, drawing) != null) {
+                events.sendPersonal(principal, GameEvent.error("ALREADY_SUBMITTED"));
+                return;
+            }
+            maybeCloseDrawing(room);
+        }
+        events.broadcastState(room);
+    }
+
+    /** Deadline fallback: whoever hasn't submitted is simply left out of the bracket. */
+    void forceCloseDrawing(Room room) {
+        synchronized (room) {
+            if (room.getPhase() != GamePhase.DRAWING) return;
+            log.debug("Room {}: drawing deadline hit with {}/{} drawings in",
+                    room.getRoomCode(), room.getDrawings().size(), room.presenceCount());
+            closeDrawingLocked(room);
+        }
+        events.broadcastState(room);
+    }
+
     // --- Disconnect handling ---
 
     /**
@@ -188,6 +254,7 @@ public class GameService {
             if (room.presenceCount() == 0) return; // room will expire via CleanupScheduler
             maybeOpenVoting(room);
             maybeCloseVoting(room);
+            maybeCloseDrawing(room);
         }
         events.broadcastState(room);
     }
@@ -228,8 +295,37 @@ public class GameService {
         Prompt winner = tied.get(random.nextInt(tied.size()));
 
         room.setWinningPrompt(winner);
-        room.setPhase(GamePhase.DRAWING);
+        openDrawing(room);
         log.debug("Room {}: prompt vote closed, winner '{}' ({} vote(s), {} tied)",
                 room.getRoomCode(), winner.text(), max, tied.size());
+    }
+
+    private void openDrawing(Room room) {
+        room.setPhase(GamePhase.DRAWING);
+        Instant deadline = Instant.now().plus(drawingDuration);
+        room.setPhaseDeadline(deadline);
+        ScheduledFuture<?> timer = gameScheduler.schedule(
+                () -> forceCloseDrawing(room), deadline.plus(DRAWING_GRACE));
+        ScheduledFuture<?> previous = phaseTimers.put(room.getRoomCode(), timer);
+        if (previous != null) previous.cancel(false);
+    }
+
+    private void maybeCloseDrawing(Room room) {
+        if (room.getPhase() != GamePhase.DRAWING) return;
+        if (room.presenceCount() == 0) return;
+        boolean allSubmitted = room.getActiveNames().keySet().stream()
+                .allMatch(room.getDrawings()::containsKey);
+        if (!allSubmitted) return;
+        closeDrawingLocked(room);
+    }
+
+    private void closeDrawingLocked(Room room) {
+        room.setPhaseDeadline(null);
+        ScheduledFuture<?> timer = phaseTimers.remove(room.getRoomCode());
+        if (timer != null) timer.cancel(false);
+        // TODO Phase 3: seed the bracket from room.getDrawings() here
+        room.setPhase(GamePhase.BRACKET_VOTING);
+        log.debug("Room {}: drawing phase closed with {} drawing(s)",
+                room.getRoomCode(), room.getDrawings().size());
     }
 }

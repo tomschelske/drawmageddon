@@ -7,6 +7,7 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
 import org.springframework.web.socket.config.annotation.EnableWebSocketMessageBroker;
 import org.springframework.web.socket.config.annotation.StompEndpointRegistry;
 import org.springframework.web.socket.config.annotation.WebSocketMessageBrokerConfigurer;
+import org.springframework.web.socket.config.annotation.WebSocketTransportRegistration;
 
 @Configuration
 @EnableWebSocketMessageBroker
@@ -29,6 +30,14 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setTaskScheduler(heartbeatScheduler());
         registry.setApplicationDestinationPrefixes("/app");
         registry.setUserDestinationPrefix("/user");
+    }
+
+    @Override
+    public void configureWebSocketTransport(WebSocketTransportRegistration registration) {
+        // Canvas snapshots travel as base64 PNG data URLs, far above the 64KB default
+        registration.setMessageSizeLimit(1024 * 1024);
+        registration.setSendBufferSizeLimit(4 * 1024 * 1024);
+        registration.setSendTimeLimit(20_000);
     }
 
     @Override

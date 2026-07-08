@@ -2,6 +2,8 @@ package com.example.drawmageddon.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -14,7 +16,8 @@ public record RoomStateView(String roomCode,
                             List<PlayerView> players,
                             int minPlayersToStart,
                             List<PromptView> prompts,
-                            String winningPrompt) {
+                            String winningPrompt,
+                            Long phaseRemainingMillis) {
 
     /** `done` = has completed the current phase's action (submitted / voted). */
     public record PlayerView(String name, boolean host, boolean done) {}
@@ -34,6 +37,7 @@ public record RoomStateView(String roomCode,
             boolean done = switch (phase) {
                 case PROMPT_SUBMISSION -> room.getPrompts().containsKey(principal);
                 case PROMPT_VOTING -> room.getPromptVotes().containsKey(principal);
+                case DRAWING -> room.getDrawings().containsKey(principal);
                 default -> false;
             };
             players.add(new PlayerView(name, principal.equals(hostId), done));
@@ -55,7 +59,14 @@ public record RoomStateView(String roomCode,
         Prompt winner = room.getWinningPrompt();
         String winningPrompt = winner == null ? null : winner.text();
 
+        // Clients count down locally from remaining-at-broadcast, so clock skew is irrelevant
+        Long phaseRemainingMillis = null;
+        Instant deadline = room.getPhaseDeadline();
+        if (deadline != null) {
+            phaseRemainingMillis = Math.max(0, Duration.between(Instant.now(), deadline).toMillis());
+        }
+
         return new RoomStateView(room.getRoomCode(), phase, players, minPlayersToStart,
-                                 prompts, winningPrompt);
+                                 prompts, winningPrompt, phaseRemainingMillis);
     }
 }
