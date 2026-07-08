@@ -1,0 +1,7 @@
+target/
+node_modules/
+src/main/resources/static/js/
+.DS_Store
+*.class
+*.jar
+.claude/

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Drawmageddon</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', system-ui, sans-serif;
+      background: linear-gradient(135deg, #fef3c7 0%, #fde8e8 50%, #ede9fe 100%);
+      color: #18181b;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+
+    .hidden { display: none !important; }
+
+    .card {
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 16px;
+      box-shadow: 0 10px 40px rgba(24, 24, 27, 0.12);
+      padding: 36px;
+      width: 100%;
+      max-width: 440px;
+    }
+
+    h1 {
+      font-size: 30px;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+      margin-bottom: 4px;
+    }
+
+    .tagline { color: #71717a; font-size: 14px; margin-bottom: 24px; }
+
+    label { display: block; font-size: 13px; font-weight: 600; color: #52525b; margin: 14px 0 6px; }
+
+    input[type="text"] {
+      padding: 11px 14px;
+      border: 1px solid #d4d4d8;
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+      outline: none;
+      width: 100%;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+
+    input[type="text"]:focus {
+      border-color: #f59e0b;
+      box-shadow: 0 0 0 3px rgba(245, 158, 11, 0.15);
+    }
+
+    button {
+      cursor: pointer;
+      padding: 11px 20px;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      font-family: inherit;
+      transition: background 0.15s, transform 0.1s;
+    }
+
+    button:active { transform: scale(0.98); }
+    button:disabled { cursor: default; opacity: 0.55; transform: none; }
+
+    .primary { background: #f59e0b; color: #fff; width: 100%; margin-top: 18px; }
+    .primary:hover:not(:disabled) { background: #d97706; }
+    .secondary { background: #ede9fe; color: #5b21b6; width: 100%; margin-top: 10px; }
+    .secondary:hover { background: #ddd6fe; }
+
+    .divider {
+      display: flex; align-items: center; gap: 12px;
+      color: #a1a1aa; font-size: 12px; font-weight: 600;
+      margin: 22px 0 4px;
+    }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #e4e4e7; }
+
+    .error {
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #b91c1c;
+      border-radius: 8px;
+      padding: 10px 14px;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+
+    /* Lobby */
+    .room-code {
+      font-size: 34px;
+      font-weight: 800;
+      letter-spacing: 6px;
+      text-align: center;
+      background: #fffbeb;
+      border: 2px dashed #f59e0b;
+      border-radius: 12px;
+      padding: 14px;
+      margin: 18px 0;
+    }
+
+    .lobby-meta { color: #71717a; font-size: 14px; margin-bottom: 10px; }
+
+    ul#lobby-players { list-style: none; }
+
+    #lobby-players li {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #fafafa;
+      margin-bottom: 6px;
+      font-weight: 500;
+    }
+
+    #lobby-players li.me { background: #fffbeb; }
+
+    .badge {
+      background: #f59e0b; color: #fff;
+      font-size: 11px; font-weight: 700;
+      border-radius: 999px; padding: 2px 8px;
+      text-transform: uppercase; letter-spacing: 0.5px;
+    }
+
+    .wait-note { text-align: center; color: #a1a1aa; font-size: 14px; margin-top: 18px; }
+
+    /* Game placeholder */
+    #game-phase { font-size: 22px; font-weight: 700; text-align: center; margin: 26px 0; }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <h1>Drawmageddon</h1>
+    <p class="tagline">Prompt &amp; Draw — one prompt, many drawings, one champion.</p>
+
+    <!-- Home: create or join -->
+    <section id="screen-home">
+      <div id="home-error" class="error hidden"></div>
+      <label for="input-name">Your name</label>
+      <input type="text" id="input-name" maxlength="32" placeholder="e.g. Picasso" autocomplete="off" />
+      <button id="btn-create" class="primary">Create a room</button>
+      <div class="divider">or join one</div>
+      <label for="input-code">Room code</label>
+      <input type="text" id="input-code" maxlength="6" placeholder="ABC123" autocomplete="off"
+             style="text-transform: uppercase;" />
+      <button id="btn-join" class="secondary">Join room</button>
+    </section>
+
+    <!-- Lobby -->
+    <section id="screen-lobby" class="hidden">
+      <p class="lobby-meta">Share this code with your friends:</p>
+      <div id="lobby-code" class="room-code"></div>
+      <p class="lobby-meta" id="lobby-count"></p>
+      <ul id="lobby-players"></ul>
+      <button id="btn-start" class="primary hidden">Start game</button>
+      <p id="lobby-wait" class="wait-note">Waiting for the host to start the game…</p>
+    </section>
+
+    <!-- In-game (placeholder until phase UIs land) -->
+    <section id="screen-game" class="hidden">
+      <div id="game-phase"></div>
+      <p class="wait-note">This phase's UI is coming in the next build phase.</p>
+    </section>
+  </main>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
