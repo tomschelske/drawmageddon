@@ -132,8 +132,75 @@
 
     .wait-note { text-align: center; color: #a1a1aa; font-size: 14px; margin-top: 18px; }
 
+    /* Prompt submission */
+    .progress-note { text-align: center; color: #71717a; font-size: 14px; margin: 14px 0 8px; }
+
+    .check { color: #16a34a; font-weight: 800; margin-left: auto; }
+
+    /* Prompt voting */
+    #vote-prompts { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }
+
+    .prompt-card {
+      position: relative;
+      display: flex; align-items: center; gap: 10px;
+      width: 100%;
+      text-align: left;
+      background: #fafafa;
+      border: 2px solid #e4e4e7;
+      padding: 13px 14px;
+      overflow: hidden;
+    }
+
+    .prompt-card:hover:not(:disabled) { border-color: #f59e0b; background: #fffbeb; }
+    .prompt-card:disabled { opacity: 1; cursor: default; }
+    .prompt-card.my-vote { border-color: #f59e0b; }
+
+    .tally-bar {
+      position: absolute;
+      left: 0; top: 0; bottom: 0;
+      background: rgba(245, 158, 11, 0.16);
+      transition: width 0.4s ease;
+      pointer-events: none;
+    }
+
+    .prompt-text { position: relative; flex: 1; font-weight: 500; }
+
+    .tally {
+      position: relative;
+      background: #f59e0b; color: #fff;
+      font-size: 13px; font-weight: 700;
+      border-radius: 999px;
+      min-width: 26px; height: 26px;
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 0 8px;
+    }
+
+    /* Toast for in-game errors */
+    #toast {
+      position: fixed;
+      bottom: 28px; left: 50%;
+      transform: translateX(-50%);
+      background: #18181b; color: #fff;
+      border-radius: 8px;
+      padding: 10px 18px;
+      font-size: 14px;
+      box-shadow: 0 6px 24px rgba(0,0,0,0.25);
+      z-index: 10;
+    }
+
     /* Game placeholder */
-    #game-phase { font-size: 22px; font-weight: 700; text-align: center; margin: 26px 0; }
+    #game-phase { font-size: 22px; font-weight: 700; text-align: center; margin: 26px 0 10px; }
+
+    .winning-prompt {
+      text-align: center;
+      background: #fffbeb;
+      border: 2px dashed #f59e0b;
+      border-radius: 12px;
+      padding: 14px;
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
   </style>
 </head>
 <body>
@@ -164,11 +231,36 @@
       <p id="lobby-wait" class="wait-note">Waiting for the host to start the game…</p>
     </section>
 
+    <!-- Prompt submission -->
+    <section id="screen-submit" class="hidden">
+      <div id="submit-form">
+        <label for="input-prompt">Your drawing prompt</label>
+        <input type="text" id="input-prompt" maxlength="140"
+               placeholder="e.g. a raccoon giving a TED talk" autocomplete="off" />
+        <button id="btn-submit-prompt" class="primary">Submit prompt</button>
+      </div>
+      <p id="submit-waiting" class="wait-note hidden">Prompt in! Waiting for the others…</p>
+      <p id="submit-progress" class="progress-note"></p>
+      <ul id="submit-players"></ul>
+    </section>
+
+    <!-- Prompt voting (live tally) -->
+    <section id="screen-vote" class="hidden">
+      <p id="vote-hint" class="lobby-meta"></p>
+      <div id="vote-prompts"></div>
+      <p id="vote-progress" class="progress-note"></p>
+    </section>
+
     <!-- In-game (placeholder until phase UIs land) -->
     <section id="screen-game" class="hidden">
       <div id="game-phase"></div>
+      <div id="game-prompt-wrap" class="winning-prompt hidden">
+        “<span id="game-prompt"></span>”
+      </div>
       <p class="wait-note">This phase's UI is coming in the next build phase.</p>
     </section>
+
+    <div id="toast" class="hidden"></div>
   </main>
 
   <script src="/js/app.js"></script>

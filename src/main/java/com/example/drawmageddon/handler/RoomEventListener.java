@@ -1,7 +1,7 @@
 package com.example.drawmageddon.handler;
 
 import com.example.drawmageddon.model.Room;
-import com.example.drawmageddon.service.GameEvents;
+import com.example.drawmageddon.service.GameService;
 import com.example.drawmageddon.service.RoomManager;
 import com.example.drawmageddon.service.SessionRegistry;
 import org.springframework.context.event.EventListener;
@@ -15,14 +15,14 @@ public class RoomEventListener {
 
     private final RoomManager roomManager;
     private final SessionRegistry sessionRegistry;
-    private final GameEvents events;
+    private final GameService gameService;
 
     public RoomEventListener(RoomManager roomManager,
                              SessionRegistry sessionRegistry,
-                             GameEvents events) {
+                             GameService gameService) {
         this.roomManager = roomManager;
         this.sessionRegistry = sessionRegistry;
-        this.events = events;
+        this.gameService = gameService;
     }
 
     @EventListener
@@ -49,8 +49,10 @@ public class RoomEventListener {
 
         if (room.getSessions().isEmpty()) {
             room.setLastEmptiedAt(Instant.now());
+            return;
         }
 
-        events.broadcastState(room);
+        // Re-check phase completion and broadcast the updated roster
+        gameService.playerLeft(room);
     }
 }

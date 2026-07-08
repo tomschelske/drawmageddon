@@ -10,8 +10,6 @@ import org.springframework.stereotype.Service;
 @Service
 public class GameEvents {
 
-    public static final int MIN_PLAYERS_TO_START = 3;
-
     private final SimpMessagingTemplate messaging;
 
     public GameEvents(SimpMessagingTemplate messaging) {
@@ -19,7 +17,7 @@ public class GameEvents {
     }
 
     public RoomStateView view(Room room) {
-        return RoomStateView.of(room, MIN_PLAYERS_TO_START);
+        return RoomStateView.of(room, GameService.MIN_PLAYERS_TO_START);
     }
 
     /** Broadcast the current room state to everyone in the room. */

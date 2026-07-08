@@ -1,11 +1,8 @@
 package com.example.drawmageddon.handler;
 
-import com.example.drawmageddon.model.GameEvent;
-import com.example.drawmageddon.model.GamePhase;
 import com.example.drawmageddon.model.Room;
-import com.example.drawmageddon.service.GameEvents;
+import com.example.drawmageddon.service.GameService;
 import com.example.drawmageddon.service.RoomManager;
-import com.example.drawmageddon.service.SessionRegistry;
 import org.springframework.http.ResponseEntity;
 import org.springframework.messaging.handler.annotation.DestinationVariable;
 import org.springframework.messaging.handler.annotation.MessageMapping;
@@ -18,21 +15,20 @@ import org.springframework.web.bind.annotation.ResponseBody;
 
 import java.util.Map;
 
+/** Thin transport layer: parses messages and delegates to GameService. */
 @Controller
 public class GameController {
 
     public record JoinRequest(String name) {}
+    public record PromptSubmission(String text) {}
+    public record VoteRequest(String promptId) {}
 
     private final RoomManager roomManager;
-    private final SessionRegistry sessionRegistry;
-    private final GameEvents events;
+    private final GameService gameService;
 
-    public GameController(RoomManager roomManager,
-                          SessionRegistry sessionRegistry,
-                          GameEvents events) {
+    public GameController(RoomManager roomManager, GameService gameService) {
         this.roomManager = roomManager;
-        this.sessionRegistry = sessionRegistry;
-        this.events = events;
+        this.gameService = gameService;
     }
 
     // --- HTTP: room management ---
@@ -56,81 +52,36 @@ public class GameController {
             .orElse(ResponseEntity.notFound().build());
     }
 
-    // --- WebSocket: join room ---
+    // --- WebSocket: game intents ---
 
     @MessageMapping("/room/{roomCode}/join")
     public void joinRoom(@DestinationVariable String roomCode,
                          JoinRequest request,
                          SimpMessageHeaderAccessor headerAccessor) {
-
-        String principal = headerAccessor.getUser().getName();
-
-        Room room = roomManager.findRoom(roomCode).orElse(null);
-        if (room == null) {
-            events.sendPersonal(principal, GameEvent.error("ROOM_NOT_FOUND"));
-            return;
-        }
-
-        if (room.getPhase() != GamePhase.LOBBY) {
-            events.sendPersonal(principal, GameEvent.error("GAME_IN_PROGRESS"));
-            return;
-        }
-
-        String name = request.name() == null ? "" : request.name().trim();
-        if (name.isEmpty() || name.length() > 32) {
-            events.sendPersonal(principal, GameEvent.error("INVALID_NAME"));
-            return;
-        }
-
-        String existingHolder = room.getClaimedNames().putIfAbsent(name.toLowerCase(), principal);
-        if (existingHolder != null) {
-            events.sendPersonal(principal, GameEvent.error("NAME_TAKEN"));
-            return;
-        }
-
-        room.getActiveNames().put(principal, name);
-        room.getSessions().add(principal);
-        room.setLastEmptiedAt(null);
-        // First joiner becomes host; reassigned in RoomEventListener if they leave
-        if (room.getHostId() == null) {
-            room.setHostId(principal);
-        }
-        sessionRegistry.register(principal, room.getRoomCode(), name);
-
-        events.sendPersonal(principal, GameEvent.joinOk(events.view(room)));
-        events.broadcastState(room);
+        gameService.join(roomCode, principal(headerAccessor), request.name());
     }
-
-    // --- WebSocket: host starts the game ---
 
     @MessageMapping("/room/{roomCode}/start")
     public void startGame(@DestinationVariable String roomCode,
                           SimpMessageHeaderAccessor headerAccessor) {
+        gameService.start(roomCode, principal(headerAccessor));
+    }
 
-        String principal = headerAccessor.getUser().getName();
+    @MessageMapping("/room/{roomCode}/prompt")
+    public void submitPrompt(@DestinationVariable String roomCode,
+                             PromptSubmission submission,
+                             SimpMessageHeaderAccessor headerAccessor) {
+        gameService.submitPrompt(roomCode, principal(headerAccessor), submission.text());
+    }
 
-        Room room = roomManager.findRoom(roomCode).orElse(null);
-        if (room == null) {
-            events.sendPersonal(principal, GameEvent.error("ROOM_NOT_FOUND"));
-            return;
-        }
+    @MessageMapping("/room/{roomCode}/vote")
+    public void votePrompt(@DestinationVariable String roomCode,
+                           VoteRequest vote,
+                           SimpMessageHeaderAccessor headerAccessor) {
+        gameService.votePrompt(roomCode, principal(headerAccessor), vote.promptId());
+    }
 
-        if (!principal.equals(room.getHostId())) {
-            events.sendPersonal(principal, GameEvent.error("NOT_HOST"));
-            return;
-        }
-
-        if (room.getPhase() != GamePhase.LOBBY) {
-            events.sendPersonal(principal, GameEvent.error("ALREADY_STARTED"));
-            return;
-        }
-
-        if (room.presenceCount() < GameEvents.MIN_PLAYERS_TO_START) {
-            events.sendPersonal(principal, GameEvent.error("NOT_ENOUGH_PLAYERS"));
-            return;
-        }
-
-        room.setPhase(GamePhase.PROMPT_SUBMISSION);
-        events.broadcastState(room);
+    private String principal(SimpMessageHeaderAccessor headerAccessor) {
+        return headerAccessor.getUser().getName();
     }
 }

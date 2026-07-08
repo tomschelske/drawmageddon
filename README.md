@@ -20,6 +20,10 @@ npm run typecheck    # tsc --noEmit
 
 # Backend (from repo root)
 mvn spring-boot:run  # serves the app on http://localhost:8080
+
+# Tests
+mvn test                             # unit tests (game state machine)
+PORT=8085 node scripts/e2e-smoke.mjs # end-to-end STOMP flow (needs running server, Node 22+)
 ```
 
 ## Game loop
@@ -29,7 +33,7 @@ Lobby → prompt submission → prompt voting (live tally) → drawing (timer-bo
 ## Status
 
 - [x] Scaffold: lobby with room codes, join/host flow, game phase state machine
-- [ ] Phase 1: prompt submission + live-tally prompt voting with tie-break
+- [x] Phase 1: prompt submission + live-tally prompt voting with tie-break
 - [ ] Phase 2: canvas drawing tool (brush, color, undo, clear) + timed submission
 - [ ] Phase 3: bracket seeding, byes, hidden-until-reveal voting
 - [ ] Phase 4: bracket visualization + results polish

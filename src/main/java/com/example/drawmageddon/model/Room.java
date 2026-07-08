@@ -1,6 +1,7 @@
 package com.example.drawmageddon.model;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
@@ -29,6 +30,19 @@ public class Room {
 
     private volatile Instant lastEmptiedAt;
 
+    // --- Phase 1: prompts & prompt voting (mutate only while synchronized on this room) ---
+
+    // ownerId → their submitted prompt (one per player)
+    private final ConcurrentHashMap<String, Prompt> prompts = new ConcurrentHashMap<>();
+
+    // shuffled snapshot of all prompts, fixed when voting opens (hides submission order)
+    private volatile List<Prompt> promptBallot;
+
+    // voterId → promptId; one vote per player, final once cast
+    private final ConcurrentHashMap<String, String> promptVotes = new ConcurrentHashMap<>();
+
+    private volatile Prompt winningPrompt;
+
     public Room(String roomCode) {
         this.roomCode = roomCode;
         this.createdAt = Instant.now();
@@ -45,6 +59,12 @@ public class Room {
     public void setHostId(String hostId) { this.hostId = hostId; }
     public Instant getLastEmptiedAt() { return lastEmptiedAt; }
     public void setLastEmptiedAt(Instant t) { this.lastEmptiedAt = t; }
+    public ConcurrentHashMap<String, Prompt> getPrompts() { return prompts; }
+    public List<Prompt> getPromptBallot() { return promptBallot; }
+    public void setPromptBallot(List<Prompt> ballot) { this.promptBallot = ballot; }
+    public ConcurrentHashMap<String, String> getPromptVotes() { return promptVotes; }
+    public Prompt getWinningPrompt() { return winningPrompt; }
+    public void setWinningPrompt(Prompt p) { this.winningPrompt = p; }
 
     public int presenceCount() { return activeNames.size(); }
 }
