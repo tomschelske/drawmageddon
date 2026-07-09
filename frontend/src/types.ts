@@ -63,9 +63,13 @@ export interface MatchupView {
 }
 
 export interface BracketMatchSummary {
+  id: string;
   aArtist: string;
   bArtist: string;
+  /** Winner and vote counts appear only after the match is revealed. */
   winnerArtist?: string;
+  aVotes?: number;
+  bVotes?: number;
 }
 
 export interface BracketRoundView {

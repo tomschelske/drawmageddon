@@ -309,20 +309,118 @@
     .matchup-tally { position: absolute; top: 14px; right: 14px; background: #16a34a; }
     .matchup-card.loser .matchup-tally { background: #71717a; }
 
-    .bracket-summary {
-      margin-top: 16px;
+    /* Bracket tree */
+    .bracket-tree {
+      display: flex;
+      gap: 18px;
+      margin-top: 18px;
       border-top: 1px solid #e4e4e7;
-      padding-top: 10px;
-      font-size: 13px;
-      color: #52525b;
+      padding-top: 14px;
+      overflow-x: auto;
     }
 
-    .round-title { font-weight: 700; margin: 8px 0 2px; color: #18181b; }
-    .round-row { padding: 2px 0; }
-    .round-row.bye { font-style: italic; color: #b45309; }
+    .tree-round {
+      display: flex; flex-direction: column; justify-content: center; gap: 10px;
+      min-width: 150px;
+    }
+
+    .tree-round-label {
+      font-size: 11px; font-weight: 700; letter-spacing: 1px;
+      text-transform: uppercase; color: #a1a1aa;
+      text-align: center;
+    }
+
+    .tree-match {
+      border: 2px solid #e4e4e7;
+      border-radius: 8px;
+      overflow: hidden;
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .tree-match.current { border-color: #7c3aed; animation: current-glow 1.6s infinite; }
+
+    @keyframes current-glow {
+      50% { box-shadow: 0 0 0 4px rgba(124, 58, 237, 0.2); }
+    }
+
+    .tree-match.tbd, .tree-match.bye {
+      border-style: dashed;
+      padding: 8px 10px;
+      text-align: center;
+      color: #a1a1aa;
+    }
+
+    .tree-match.bye { color: #b45309; font-style: italic; }
+
+    .tree-slot {
+      display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      padding: 6px 10px;
+      font-weight: 500;
+    }
+
+    .tree-slot + .tree-slot { border-top: 1px solid #f4f4f5; }
+    .tree-slot.winner { background: #f0fdf4; font-weight: 700; }
+    .tree-slot.winner::after { content: '✓'; color: #16a34a; font-weight: 800; }
+    .tree-slot.loser { color: #a1a1aa; }
+
+    .tree-votes {
+      background: #e4e4e7; color: #3f3f46;
+      border-radius: 999px;
+      font-size: 11px; font-weight: 700;
+      padding: 1px 7px;
+    }
+
+    .tree-slot.winner .tree-votes { background: #16a34a; color: #fff; }
+
+    /* Matchup entry + reveal animations */
+    .matchup-card.enter-left { animation: slide-in-left 0.45s ease both; }
+    .matchup-card.enter-right { animation: slide-in-right 0.45s ease both; }
+    .vs.enter-pop { animation: vs-pop 0.5s cubic-bezier(0.34, 1.56, 0.64, 1) 0.25s both; }
+
+    @keyframes slide-in-left {
+      from { opacity: 0; transform: translateX(-36px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    @keyframes slide-in-right {
+      from { opacity: 0; transform: translateX(36px); }
+      to { opacity: 1; transform: none; }
+    }
+
+    @keyframes vs-pop {
+      from { opacity: 0; transform: scale(0.3); }
+      to { opacity: 1; transform: scale(1); }
+    }
+
+    .matchup-card.winner { animation: winner-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
+    .matchup-card.loser { animation: loser-fade 0.6s ease both; }
+    .matchup-tally { animation: vs-pop 0.35s ease 0.3s both; }
+
+    @keyframes winner-pop {
+      0% { transform: scale(1); }
+      45% { transform: scale(1.05); }
+      100% { transform: scale(1.02); }
+    }
+
+    @keyframes loser-fade {
+      from { opacity: 1; filter: none; }
+      to { opacity: 0.55; filter: grayscale(0.7); }
+    }
+
+    /* Screen transitions */
+    .screen-enter { animation: screen-fade 0.3s ease both; }
+
+    @keyframes screen-fade {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: none; }
+    }
 
     /* Results */
-    .results-title { text-align: center; font-size: 26px; margin-bottom: 14px; }
+    .results-title {
+      text-align: center; font-size: 26px; margin-bottom: 14px;
+      animation: vs-pop 0.6s cubic-bezier(0.34, 1.56, 0.64, 1) 0.2s both;
+    }
 
     .results-image {
       width: 100%;
@@ -330,9 +428,30 @@
       border-radius: 12px;
       background: #fff;
       display: block;
+      animation: winner-pop 0.7s cubic-bezier(0.34, 1.56, 0.64, 1) 0.4s both;
     }
 
     .results-caption { text-align: center; font-size: 16px; margin-top: 12px; }
+
+    #results-confetti {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      overflow: hidden;
+      z-index: 5;
+    }
+
+    .confetti {
+      position: absolute;
+      top: -14px;
+      width: 10px; height: 14px;
+      border-radius: 2px;
+      animation: confetti-fall linear both;
+    }
+
+    @keyframes confetti-fall {
+      to { transform: translateY(105vh) rotate(720deg); }
+    }
 
     /* Toast for in-game errors */
     #toast {
@@ -346,9 +465,6 @@
       box-shadow: 0 6px 24px rgba(0,0,0,0.25);
       z-index: 10;
     }
-
-    /* Game placeholder */
-    #game-phase { font-size: 22px; font-weight: 700; text-align: center; margin: 26px 0 10px; }
 
     .winning-prompt {
       text-align: center;
@@ -446,11 +562,12 @@
       </div>
       <div id="bracket-arena"></div>
       <p id="bracket-status" class="progress-note"></p>
-      <div id="bracket-summary" class="bracket-summary"></div>
+      <div id="bracket-tree" class="bracket-tree"></div>
     </section>
 
     <!-- Results -->
     <section id="screen-results" class="hidden">
+      <div id="results-confetti"></div>
       <div id="results-champion-wrap">
         <h2 class="results-title">🏆 Champion!</h2>
         <img id="results-image" class="results-image" alt="Winning drawing" />
@@ -462,6 +579,7 @@
       <p id="results-none" class="wait-note hidden">
         No drawings made it to the bracket this time. Awkward.
       </p>
+      <div id="results-tree" class="bracket-tree"></div>
       <button id="btn-again" class="primary hidden">Play again</button>
       <p id="results-wait" class="wait-note">Waiting for the host to start a new game…</p>
     </section>

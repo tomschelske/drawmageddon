@@ -52,8 +52,18 @@ public record RoomStateView(String roomCode,
                               String winnerId,
                               Boolean tieBroken) {}
 
-    /** Text-only bracket overview (no image payloads) for the tree display. */
-    public record BracketMatchSummary(String aArtist, String bArtist, String winnerArtist) {}
+    /**
+     * Text-only bracket overview (no image payloads) for the tree display.
+     * Vote counts appear only after the match is revealed — same hiding rule
+     * as the matchup itself.
+     */
+    @JsonInclude(JsonInclude.Include.NON_NULL)
+    public record BracketMatchSummary(String id,
+                                      String aArtist,
+                                      String bArtist,
+                                      String winnerArtist,
+                                      Integer aVotes,
+                                      Integer bVotes) {}
 
     public record BracketRoundView(List<BracketMatchSummary> matches, String byeArtist) {}
 
@@ -129,10 +139,14 @@ public record RoomStateView(String roomCode,
             for (BracketRound round : bracket.getRounds()) {
                 List<BracketMatchSummary> summaries = new ArrayList<>();
                 for (BracketMatch m : round.matches()) {
+                    boolean revealed = m.isRevealed();
                     summaries.add(new BracketMatchSummary(
+                            m.getId(),
                             m.getA().ownerName(),
                             m.getB().ownerName(),
-                            m.isRevealed() ? m.getWinner().ownerName() : null));
+                            revealed ? m.getWinner().ownerName() : null,
+                            revealed ? m.votesFor(m.getA()) : null,
+                            revealed ? m.votesFor(m.getB()) : null));
                 }
                 bracketView.add(new BracketRoundView(summaries,
                         round.bye() == null ? null : round.bye().ownerName()));

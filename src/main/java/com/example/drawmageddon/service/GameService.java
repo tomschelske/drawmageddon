@@ -90,23 +90,27 @@ public class GameService {
             return;
         }
 
-        String existingHolder = room.getClaimedNames().putIfAbsent(name.toLowerCase(), principal);
-        if (existingHolder != null) {
-            events.sendPersonal(principal, GameEvent.error("NAME_TAKEN"));
-            return;
-        }
+        // Broadcasts happen inside the room lock so state snapshots are built
+        // and enqueued in mutation order (see setPreservePublishOrder)
+        synchronized (room) {
+            String existingHolder = room.getClaimedNames().putIfAbsent(name.toLowerCase(), principal);
+            if (existingHolder != null) {
+                events.sendPersonal(principal, GameEvent.error("NAME_TAKEN"));
+                return;
+            }
 
-        room.getActiveNames().put(principal, name);
-        room.getSessions().add(principal);
-        room.setLastEmptiedAt(null);
-        // First joiner becomes host; reassigned in RoomEventListener if they leave
-        if (room.getHostId() == null) {
-            room.setHostId(principal);
-        }
-        sessionRegistry.register(principal, room.getRoomCode(), name);
+            room.getActiveNames().put(principal, name);
+            room.getSessions().add(principal);
+            room.setLastEmptiedAt(null);
+            // First joiner becomes host; reassigned in RoomEventListener if they leave
+            if (room.getHostId() == null) {
+                room.setHostId(principal);
+            }
+            sessionRegistry.register(principal, room.getRoomCode(), name);
 
-        events.sendPersonal(principal, GameEvent.joinOk(events.view(room)));
-        events.broadcastState(room);
+            events.sendPersonal(principal, GameEvent.joinOk(events.view(room)));
+            events.broadcastState(room);
+        }
     }
 
     public void start(String roomCode, String principal) {
@@ -130,8 +134,8 @@ public class GameService {
                 return;
             }
             room.setPhase(GamePhase.PROMPT_SUBMISSION);
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     // --- Prompt submission ---
@@ -163,8 +167,8 @@ public class GameService {
                 return;
             }
             maybeOpenVoting(room);
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     // --- Prompt voting ---
@@ -198,9 +202,8 @@ public class GameService {
                 return;
             }
             maybeCloseVoting(room);
+            events.broadcastState(room);
         }
-        // Broadcasting outside the lock is what makes the tally live
-        events.broadcastState(room);
     }
 
     // --- Drawing ---
@@ -233,8 +236,8 @@ public class GameService {
                 return;
             }
             maybeCloseDrawing(room);
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     /** Deadline fallback: whoever hasn't submitted is simply left out of the bracket. */
@@ -244,8 +247,8 @@ public class GameService {
             log.debug("Room {}: drawing deadline hit with {}/{} drawings in",
                     room.getRoomCode(), room.getDrawings().size(), room.presenceCount());
             closeDrawingLocked(room);
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     // --- Bracket voting ---
@@ -286,9 +289,9 @@ public class GameService {
                 return;
             }
             maybeCloseMatch(room);
+            // Pre-reveal broadcasts carry only the votes-in count, never the tally
+            events.broadcastState(room);
         }
-        // Pre-reveal broadcasts carry only the votes-in count, never the tally
-        events.broadcastState(room);
     }
 
     public void playAgain(String roomCode, String principal) {
@@ -309,8 +312,8 @@ public class GameService {
             }
             cancelTimer(room);
             room.resetForNewGame();
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     // --- Disconnect handling ---
@@ -327,8 +330,8 @@ public class GameService {
             maybeCloseVoting(room);
             maybeCloseDrawing(room);
             maybeCloseMatch(room);
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     // --- Phase transitions (call only while synchronized on the room) ---
@@ -453,8 +456,8 @@ public class GameService {
                 log.debug("Room {}: bracket complete, champion {}", room.getRoomCode(),
                         bracket.getChampion() == null ? "none" : bracket.getChampion().ownerName());
             }
+            events.broadcastState(room);
         }
-        events.broadcastState(room);
     }
 
     private void cancelTimer(Room room) {

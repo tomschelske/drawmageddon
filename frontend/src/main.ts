@@ -18,6 +18,9 @@ let drawTimer: number | undefined;
 
 // Bracket phase
 let myMatchVote: { matchId: string; drawingId: string } | null = null;
+// Signature of the last-rendered arena; rebuilding only on change keeps
+// entry/reveal animations from replaying on every state broadcast
+let arenaKey = '';
 
 // --- DOM helpers ---
 
@@ -32,7 +35,14 @@ type Screen = (typeof screens)[number];
 
 function showScreen(name: Screen): void {
   for (const s of screens) {
-    el(`screen-${s}`).classList.toggle('hidden', s !== name);
+    const node = el(`screen-${s}`);
+    if (s === name && node.classList.contains('hidden')) {
+      // Restart the fade-in each time a screen becomes visible
+      node.classList.remove('screen-enter');
+      void node.offsetWidth;
+      node.classList.add('screen-enter');
+    }
+    node.classList.toggle('hidden', s !== name);
   }
   // Canvas and matchup screens need elbow room; everything else stays compact
   const wide = name === 'draw' || name === 'bracket';
@@ -224,7 +234,9 @@ function renderDraw(state: RoomStateView, phaseChanged: boolean): void {
 
 // --- Bracket phase ---
 
-function drawingCard(state: RoomStateView, drawing: { id: string; artist: string; imageData: string }): HTMLElement {
+function drawingCard(state: RoomStateView,
+                     drawing: { id: string; artist: string; imageData: string },
+                     entering: boolean): HTMLElement {
   const m = state.matchup;
   if (!m) throw new Error('no matchup');
   const mine = drawing.artist === myName;
@@ -233,6 +245,7 @@ function drawingCard(state: RoomStateView, drawing: { id: string; artist: string
 
   const card = document.createElement('button');
   card.className = 'matchup-card';
+  if (entering) card.classList.add(drawing.id === m.a.id ? 'enter-left' : 'enter-right');
   if (mine) card.classList.add('mine');
   if (votedThis) card.classList.add('my-vote');
   card.disabled = m.revealed || iVoted || mine;
@@ -266,29 +279,89 @@ function drawingCard(state: RoomStateView, drawing: { id: string; artist: string
   return card;
 }
 
-function renderBracketSummary(listId: string, state: RoomStateView): void {
-  const box = el(listId);
-  box.innerHTML = '';
-  for (const [i, round] of (state.bracket ?? []).entries()) {
-    const title = document.createElement('div');
-    title.className = 'round-title';
-    title.textContent = `Round ${i + 1}`;
-    box.appendChild(title);
+/** Column-per-round bracket tree, grown live as rounds are seeded. */
+function renderBracketTree(treeId: string, state: RoomStateView): void {
+  const tree = el(treeId);
+  tree.innerHTML = '';
+  const rounds = state.bracket ?? [];
+  if (rounds.length === 0) return;
+
+  // Expected total rounds from the round-1 entrant count (byes included)
+  const entrants = rounds[0].matches.length * 2 + (rounds[0].byeArtist ? 1 : 0);
+  const totalRounds = Math.max(rounds.length, Math.ceil(Math.log2(Math.max(2, entrants))));
+  const currentMatchId = state.matchup?.matchId;
+
+  for (let i = 0; i < totalRounds; i++) {
+    const column = document.createElement('div');
+    column.className = 'tree-round';
+
+    const label = document.createElement('div');
+    label.className = 'tree-round-label';
+    label.textContent = i === totalRounds - 1 ? 'Final' : `Round ${i + 1}`;
+    column.appendChild(label);
+
+    const round = rounds[i];
+    if (!round) {
+      // Not seeded yet — the bracket grows as winners emerge
+      const tbd = document.createElement('div');
+      tbd.className = 'tree-match tbd';
+      tbd.textContent = '· · ·';
+      column.appendChild(tbd);
+      tree.appendChild(column);
+      continue;
+    }
+
     for (const match of round.matches) {
-      const row = document.createElement('div');
-      row.className = 'round-row';
-      row.textContent = match.winnerArtist
-        ? `${match.aArtist} vs ${match.bArtist} — ${match.winnerArtist} wins`
-        : `${match.aArtist} vs ${match.bArtist}`;
-      box.appendChild(row);
+      const box = document.createElement('div');
+      box.className = 'tree-match';
+      if (match.id === currentMatchId && state.phase === 'BRACKET_VOTING') {
+        box.classList.add('current');
+      }
+      for (const side of ['a', 'b'] as const) {
+        const artist = side === 'a' ? match.aArtist : match.bArtist;
+        const votes = side === 'a' ? match.aVotes : match.bVotes;
+        const slot = document.createElement('div');
+        slot.className = 'tree-slot';
+        if (match.winnerArtist) {
+          slot.classList.add(match.winnerArtist === artist ? 'winner' : 'loser');
+        }
+        const name = document.createElement('span');
+        name.textContent = artist;
+        slot.appendChild(name);
+        if (votes !== undefined) {
+          const tally = document.createElement('span');
+          tally.className = 'tree-votes';
+          tally.textContent = String(votes);
+          slot.appendChild(tally);
+        }
+        box.appendChild(slot);
+      }
+      column.appendChild(box);
     }
+
     if (round.byeArtist) {
-      const row = document.createElement('div');
-      row.className = 'round-row bye';
-      row.textContent = `${round.byeArtist} draws a bye and advances`;
-      box.appendChild(row);
+      const bye = document.createElement('div');
+      bye.className = 'tree-match bye';
+      bye.textContent = `${round.byeArtist} · bye`;
+      column.appendChild(bye);
     }
+
+    tree.appendChild(column);
   }
+}
+
+function rebuildArena(state: RoomStateView, entering: boolean): void {
+  const m = state.matchup;
+  if (!m) return;
+  const arena = el('bracket-arena');
+  arena.innerHTML = '';
+  arena.appendChild(drawingCard(state, m.a, entering));
+  const vs = document.createElement('div');
+  vs.className = 'vs';
+  if (entering) vs.classList.add('enter-pop');
+  vs.textContent = 'VS';
+  arena.appendChild(vs);
+  arena.appendChild(drawingCard(state, m.b, entering));
 }
 
 function renderBracket(state: RoomStateView): void {
@@ -298,14 +371,15 @@ function renderBracket(state: RoomStateView): void {
   el('bracket-round').textContent = `Round ${m.round} — Match ${m.matchIndex} of ${m.matchCount}`;
   el('bracket-prompt').textContent = state.winningPrompt ?? '';
 
-  const arena = el('bracket-arena');
-  arena.innerHTML = '';
-  arena.appendChild(drawingCard(state, m.a));
-  const vs = document.createElement('div');
-  vs.className = 'vs';
-  vs.textContent = 'VS';
-  arena.appendChild(vs);
-  arena.appendChild(drawingCard(state, m.b));
+  // Rebuild the arena only when something visual changed, so animations
+  // (entry slide, winner pop) fire exactly once per transition
+  const iVoted = me(state)?.done ?? false;
+  const key = `${m.matchId}:${m.revealed}:${iVoted}:${myMatchVote?.drawingId ?? ''}`;
+  if (key !== arenaKey) {
+    const entering = !arenaKey.startsWith(`${m.matchId}:`);
+    arenaKey = key;
+    rebuildArena(state, entering);
+  }
 
   const status = el('bracket-status');
   if (m.revealed) {
@@ -323,10 +397,30 @@ function renderBracket(state: RoomStateView): void {
     status.textContent = `${base} (${m.votesIn} of ${state.players.length} votes in)`;
   }
 
-  renderBracketSummary('bracket-summary', state);
+  renderBracketTree('bracket-tree', state);
 }
 
-function renderResults(state: RoomStateView): void {
+// --- Results confetti (pure CSS animation; nodes clean themselves up) ---
+
+const CONFETTI_COLORS = ['#f59e0b', '#dc2626', '#16a34a', '#2563eb', '#7c3aed', '#ec4899'];
+
+function spawnConfetti(): void {
+  const host = el('results-confetti');
+  host.innerHTML = '';
+  for (let i = 0; i < 24; i++) {
+    const piece = document.createElement('span');
+    piece.className = 'confetti';
+    piece.style.left = `${Math.random() * 100}%`;
+    piece.style.background = CONFETTI_COLORS[i % CONFETTI_COLORS.length];
+    piece.style.animationDelay = `${Math.random() * 0.9}s`;
+    piece.style.animationDuration = `${2.2 + Math.random() * 1.6}s`;
+    piece.style.transform = `rotate(${Math.random() * 360}deg)`;
+    host.appendChild(piece);
+  }
+  window.setTimeout(() => { host.innerHTML = ''; }, 5000);
+}
+
+function renderResults(state: RoomStateView, phaseChanged: boolean): void {
   const hasChampion = !!state.champion;
   el('results-champion-wrap').classList.toggle('hidden', !hasChampion);
   el('results-none').classList.toggle('hidden', hasChampion);
@@ -335,6 +429,9 @@ function renderResults(state: RoomStateView): void {
     el('results-artist').textContent = state.champion.artist;
     el('results-prompt').textContent = state.winningPrompt ?? '';
   }
+
+  renderBracketTree('results-tree', state);
+  if (phaseChanged && hasChampion) spawnConfetti();
 
   const iAmHost = me(state)?.host ?? false;
   el('btn-again').classList.toggle('hidden', !iAmHost);
@@ -357,6 +454,7 @@ function renderState(state: RoomStateView): void {
     myVote = null;
     myMatchVote = null;
     drawingSubmitted = false;
+    arenaKey = '';
   }
 
   switch (state.phase) {
@@ -381,7 +479,7 @@ function renderState(state: RoomStateView): void {
       showScreen('bracket');
       break;
     case 'RESULTS':
-      renderResults(state);
+      renderResults(state, phaseChanged);
       showScreen('results');
       break;
   }

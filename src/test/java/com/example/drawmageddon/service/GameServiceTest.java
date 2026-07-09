@@ -367,12 +367,19 @@ class GameServiceTest {
         assertNull(midVoteView.matchup().votesA(), "tally must be hidden while the match is open");
         assertNull(midVoteView.matchup().winnerId());
         assertEquals(1, midVoteView.matchup().votesIn());
+        // The bracket-tree summary follows the same hiding rule
+        var midSummary = midVoteView.bracket().get(0).matches().get(0);
+        assertNull(midSummary.aVotes());
+        assertNull(midSummary.winnerArtist());
 
         allVoteFor(room, match.getA());
         var revealedView = com.example.drawmageddon.model.RoomStateView.of(room, 3);
         assertTrue(revealedView.matchup().revealed());
         assertNotNull(revealedView.matchup().votesA());
         assertEquals(match.getA().id(), revealedView.matchup().winnerId());
+        var revealedSummary = revealedView.bracket().get(0).matches().get(0);
+        assertNotNull(revealedSummary.aVotes());
+        assertEquals(match.getWinner().ownerName(), revealedSummary.winnerArtist());
     }
 
     @Test

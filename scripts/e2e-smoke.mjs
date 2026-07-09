@@ -102,7 +102,7 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
     bob.states.at(-1)?.players.find((p) => p.name === 'Alice')?.done === true);
 
   send(bob, roomCode, 'prompt', { text: 'octopus barista' });
-  await sleep(250);
+  await sleep(400);
   check('still in PROMPT_SUBMISSION until everyone submits',
     alice.states.at(-1)?.phase === 'PROMPT_SUBMISSION');
 
@@ -138,13 +138,13 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
 
   send(alice, roomCode, 'drawing', { imageData: TINY_PNG });
   send(bob, roomCode, 'drawing', { imageData: TINY_PNG });
-  await sleep(250);
+  await sleep(400);
+  // Scan history: a DRAWING state with exactly 2 done proves the phase held open
   check('still DRAWING until every drawing is in',
-    alice.states.at(-1)?.phase === 'DRAWING' &&
-    alice.states.at(-1)?.players.filter((p) => p.done).length === 2);
+    alice.states.some((s) => s.phase === 'DRAWING' && s.players.filter((p) => p.done).length === 2));
 
   send(carol, roomCode, 'drawing', { imageData: TINY_PNG });
-  await sleep(300);
+  await sleep(500);
   check('all drawings in closes the phase into BRACKET_VOTING',
     [alice, bob, carol].every((p) => p.states.at(-1)?.phase === 'BRACKET_VOTING'));
 
@@ -172,14 +172,22 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
   st = alice.states.at(-1);
   check('tallies still hidden after first bracket vote',
     st.matchup.votesIn === 1 && st.matchup.votesA === undefined && !st.matchup.revealed);
+  check('bracket-tree summary also hides votes pre-reveal',
+    st.bracket[0].matches[0].aVotes === undefined &&
+    st.bracket[0].matches[0].winnerArtist === undefined);
 
   send(artistB, roomCode, 'matchvote', { drawingId: m1.a.id });
   send(neutral, roomCode, 'matchvote', { drawingId: m1.a.id });
   await sleep(400);
-  st = alice.states.at(-1);
+  // Scan history: with a short reveal pause, the advance may already have
+  // replaced the revealed matchup by the time we look
+  const revealSt = alice.states.find((s) => s.matchup?.matchId === m1.matchId && s.matchup.revealed);
   check('match reveals with full tallies and the majority winner',
-    st.matchup.revealed && st.matchup.votesA === 2 && st.matchup.votesB === 1 &&
-    st.matchup.winnerId === m1.a.id);
+    revealSt !== undefined && revealSt.matchup.votesA === 2 && revealSt.matchup.votesB === 1 &&
+    revealSt.matchup.winnerId === m1.a.id);
+  check('bracket-tree summary shows votes and winner after reveal',
+    revealSt?.bracket[0].matches[0].aVotes !== undefined &&
+    revealSt?.bracket[0].matches[0].winnerArtist === m1.a.artist);
 
   // --- Bracket: round 2 (match winner vs the bye) after the reveal pause ---
   await sleep(1600);
@@ -242,7 +250,7 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
   send(alice, roomCode, 'vote', { promptId: pa.id });
   send(bob, roomCode, 'vote', { promptId: pb.id });
   send(carol, roomCode, 'vote', { promptId: pc.id });
-  await sleep(300);
+  await sleep(600);
   const final = alice.states.at(-1);
   check('tie resolves randomly among tied prompts',
     final?.phase === 'DRAWING' &&

@@ -30,6 +30,9 @@ public class WebSocketConfig implements WebSocketMessageBrokerConfigurer {
                 .setTaskScheduler(heartbeatScheduler());
         registry.setApplicationDestinationPrefixes("/app");
         registry.setUserDestinationPrefix("/user");
+        // State snapshots must arrive in the order they were built, or clients
+        // could observe the game state machine moving backwards
+        registry.setPreservePublishOrder(true);
     }
 
     @Override
