@@ -7,8 +7,9 @@
 // prompt submission, live-tally voting, tie-break resolution, disconnects,
 // and timer-bound drawing submission.
 //
-// The timer-expiry scenario needs a short drawing timer; start the server with
-// GAME_DRAWING_SECONDS=4 to enable it (it is skipped otherwise).
+// The timer-expiry scenario needs a short drawing timer, and the bracket
+// scenario needs a short reveal pause; start the server with
+// GAME_DRAWING_SECONDS=4 GAME_REVEAL_SECONDS=1 for full coverage.
 import { Client } from '../frontend/node_modules/@stomp/stompjs/esm6/index.js';
 
 const PORT = process.env.PORT ?? '8080';
@@ -146,6 +147,68 @@ const TINY_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAf
   await sleep(300);
   check('all drawings in closes the phase into BRACKET_VOTING',
     [alice, bob, carol].every((p) => p.states.at(-1)?.phase === 'BRACKET_VOTING'));
+
+  // --- Bracket: round 1 (one match + a bye with 3 drawings) ---
+  const players = { Alice: alice, Bob: bob, Carol: carol };
+  let st = alice.states.at(-1);
+  check('matchup carries both drawings, tallies hidden',
+    st.matchup?.a?.imageData?.startsWith('data:image/png') &&
+    st.matchup?.b?.imageData?.startsWith('data:image/png') &&
+    st.matchup.votesA === undefined && st.matchup.winnerId === undefined);
+  check('3 drawings seed one match plus a bye',
+    st.bracket?.[0]?.matches?.length === 1 && typeof st.bracket?.[0]?.byeArtist === 'string');
+
+  const m1 = st.matchup;
+  const artistA = players[m1.a.artist];
+  const artistB = players[m1.b.artist];
+  const neutral = [alice, bob, carol].find((p) => p !== artistA && p !== artistB);
+
+  send(artistA, roomCode, 'matchvote', { drawingId: m1.a.id });
+  await sleep(250);
+  check('self-vote rejected (SELF_VOTE)', hasError(artistA, 'SELF_VOTE'));
+
+  send(artistA, roomCode, 'matchvote', { drawingId: m1.b.id });
+  await sleep(250);
+  st = alice.states.at(-1);
+  check('tallies still hidden after first bracket vote',
+    st.matchup.votesIn === 1 && st.matchup.votesA === undefined && !st.matchup.revealed);
+
+  send(artistB, roomCode, 'matchvote', { drawingId: m1.a.id });
+  send(neutral, roomCode, 'matchvote', { drawingId: m1.a.id });
+  await sleep(400);
+  st = alice.states.at(-1);
+  check('match reveals with full tallies and the majority winner',
+    st.matchup.revealed && st.matchup.votesA === 2 && st.matchup.votesB === 1 &&
+    st.matchup.winnerId === m1.a.id);
+
+  // --- Bracket: round 2 (match winner vs the bye) after the reveal pause ---
+  await sleep(1600);
+  st = alice.states.at(-1);
+  check('bracket advances to round 2 after the reveal pause',
+    st.phase === 'BRACKET_VOTING' && st.matchup?.round === 2 && st.matchup.matchId !== m1.matchId);
+
+  const m2 = st.matchup;
+  const artist2A = players[m2.a.artist];
+  const artist2B = players[m2.b.artist];
+  const neutral2 = [alice, bob, carol].find((p) => p !== artist2A && p !== artist2B);
+  send(artist2A, roomCode, 'matchvote', { drawingId: m2.b.id });
+  send(artist2B, roomCode, 'matchvote', { drawingId: m2.a.id });
+  send(neutral2, roomCode, 'matchvote', { drawingId: m2.a.id });
+  await sleep(2000);
+  st = alice.states.at(-1);
+  check('bracket completes into RESULTS with the right champion',
+    st.phase === 'RESULTS' && st.champion?.artist === m2.a.artist);
+
+  // --- Play again ---
+  send(bob, roomCode, 'again');
+  await sleep(250);
+  check('non-host play-again rejected (NOT_HOST)', hasError(bob, 'NOT_HOST'));
+
+  send(alice, roomCode, 'again');
+  await sleep(300);
+  st = alice.states.at(-1);
+  check('host play-again resets to LOBBY with the roster intact',
+    st.phase === 'LOBBY' && st.players.length === 3 && st.champion === undefined);
 
   for (const p of [alice, bob, carol, dup]) p.client.deactivate();
 }

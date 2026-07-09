@@ -52,9 +52,9 @@ class GameServiceTest {
         messaging = new RecordingMessaging();
         scheduler = new ThreadPoolTaskScheduler();
         scheduler.initialize();
-        // 90s drawing timer: far enough out that only explicit force-close fires in tests
+        // 90s timers: far enough out that only explicit force-close/advance fires in tests
         service = new GameService(roomManager, new SessionRegistry(), new GameEvents(messaging),
-                scheduler, 90);
+                scheduler, 90, 90);
     }
 
     @AfterEach
@@ -273,8 +273,10 @@ class GameServiceTest {
         service.submitDrawing(room.getRoomCode(), "p1", TINY_PNG);
 
         service.forceCloseDrawing(room);
-        assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
+        // A single surviving drawing wins unopposed — no bracket, straight to results
+        assertEquals(GamePhase.RESULTS, room.getPhase());
         assertEquals(1, room.getDrawings().size());
+        assertEquals("p1", room.getBracket().getChampion().ownerId());
 
         // Late submission after the phase closed is rejected
         service.submitDrawing(room.getRoomCode(), "p2", TINY_PNG);
@@ -294,6 +296,161 @@ class GameServiceTest {
 
         assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
         assertEquals(2, room.getDrawings().size());
+    }
+
+    // --- Bracket phase ---
+
+    /** Drive an n-player game all the way into the bracket (everyone draws). */
+    private Room gameInBracketPhase(String... names) {
+        Room room = startedGame(names);
+        for (int i = 1; i <= names.length; i++) {
+            service.submitPrompt(room.getRoomCode(), "p" + i, "prompt " + i);
+        }
+        String target = ownPromptIds(room).get("p1");
+        for (int i = 1; i <= names.length; i++) {
+            service.votePrompt(room.getRoomCode(), "p" + i, target);
+        }
+        assertEquals(GamePhase.DRAWING, room.getPhase());
+        for (int i = 1; i <= names.length; i++) {
+            service.submitDrawing(room.getRoomCode(), "p" + i, TINY_PNG);
+        }
+        return room;
+    }
+
+    private com.example.drawmageddon.model.BracketMatch currentMatch(Room room) {
+        return room.getBracket().currentMatch();
+    }
+
+    /** Everyone who legally can votes for the given drawing; artists of it vote the opponent. */
+    private void allVoteFor(Room room, com.example.drawmageddon.model.Drawing choice) {
+        var match = currentMatch(room);
+        var other = match.getA().id().equals(choice.id()) ? match.getB() : match.getA();
+        for (String principal : room.getActiveNames().keySet()) {
+            String vote = principal.equals(choice.ownerId()) ? other.id() : choice.id();
+            service.voteMatch(room.getRoomCode(), principal, vote);
+        }
+    }
+
+    @Test
+    void evenFieldSeedsWithoutAByeOddFieldGetsOne() {
+        Room even = gameInBracketPhase("A", "B", "C", "D");
+        assertEquals(GamePhase.BRACKET_VOTING, even.getPhase());
+        assertEquals(2, even.getBracket().getRounds().get(0).matches().size());
+        assertNull(even.getBracket().getRounds().get(0).bye());
+
+        Room odd = gameInBracketPhase("Alice", "Bob", "Carol");
+        assertEquals(1, odd.getBracket().getRounds().get(0).matches().size());
+        assertNotNull(odd.getBracket().getRounds().get(0).bye());
+    }
+
+    @Test
+    void selfVoteIsRejected() {
+        Room room = gameInBracketPhase("Alice", "Bob", "Carol");
+        var match = currentMatch(room);
+        String artistA = match.getA().ownerId();
+
+        service.voteMatch(room.getRoomCode(), artistA, match.getA().id());
+        expectPersonalError(artistA, "SELF_VOTE");
+        assertTrue(match.getVotes().isEmpty());
+    }
+
+    @Test
+    void talliesStayHiddenUntilTheMatchCloses() {
+        Room room = gameInBracketPhase("Alice", "Bob", "Carol");
+        var match = currentMatch(room);
+        // The player whose drawing got the bye is a neutral voter
+        String neutral = room.getBracket().getRounds().get(0).bye().ownerId();
+
+        service.voteMatch(room.getRoomCode(), neutral, match.getA().id());
+        var midVoteView = com.example.drawmageddon.model.RoomStateView.of(room, 3);
+        assertFalse(midVoteView.matchup().revealed());
+        assertNull(midVoteView.matchup().votesA(), "tally must be hidden while the match is open");
+        assertNull(midVoteView.matchup().winnerId());
+        assertEquals(1, midVoteView.matchup().votesIn());
+
+        allVoteFor(room, match.getA());
+        var revealedView = com.example.drawmageddon.model.RoomStateView.of(room, 3);
+        assertTrue(revealedView.matchup().revealed());
+        assertNotNull(revealedView.matchup().votesA());
+        assertEquals(match.getA().id(), revealedView.matchup().winnerId());
+    }
+
+    @Test
+    void majorityWinsTheMatchAndTieIsBrokenRandomly() {
+        Room majority = gameInBracketPhase("A", "B", "C", "D");
+        var match = currentMatch(majority);
+        allVoteFor(majority, match.getA());
+        assertEquals(match.getA().id(), match.getWinner().id());
+        assertFalse(match.isTieBroken());
+
+        Room tied = gameInBracketPhase("E", "F", "G", "H");
+        var tiedMatch = currentMatch(tied);
+        // Both artists must vote for the opponent; split the two neutrals 1–1 → 2–2 tie
+        List<String> neutrals = tied.getActiveNames().keySet().stream()
+                .filter(p -> !p.equals(tiedMatch.getA().ownerId()) && !p.equals(tiedMatch.getB().ownerId()))
+                .toList();
+        service.voteMatch(tied.getRoomCode(), tiedMatch.getA().ownerId(), tiedMatch.getB().id());
+        service.voteMatch(tied.getRoomCode(), tiedMatch.getB().ownerId(), tiedMatch.getA().id());
+        service.voteMatch(tied.getRoomCode(), neutrals.get(0), tiedMatch.getA().id());
+        service.voteMatch(tied.getRoomCode(), neutrals.get(1), tiedMatch.getB().id());
+
+        assertTrue(tiedMatch.isRevealed());
+        assertTrue(tiedMatch.isTieBroken());
+        assertTrue(tiedMatch.getWinner() == tiedMatch.getA() || tiedMatch.getWinner() == tiedMatch.getB());
+    }
+
+    @Test
+    void voteAfterRevealIsRejected() {
+        Room room = gameInBracketPhase("Alice", "Bob", "Carol");
+        var match = currentMatch(room);
+        allVoteFor(room, match.getA());
+        assertTrue(match.isRevealed());
+
+        String neutral = room.getBracket().getRounds().get(0).bye().ownerId();
+        service.voteMatch(room.getRoomCode(), neutral, match.getB().id());
+        expectPersonalError(neutral, "MATCH_CLOSED");
+    }
+
+    @Test
+    void bracketAdvancesThroughRoundsToAChampionAndResults() {
+        Room room = gameInBracketPhase("Alice", "Bob", "Carol");
+
+        // Round 1: one match + a bye
+        var match1 = currentMatch(room);
+        allVoteFor(room, match1.getA());
+        service.advanceBracket(room);
+
+        // Round 2: match winner vs the bye
+        assertEquals(GamePhase.BRACKET_VOTING, room.getPhase());
+        assertEquals(2, room.getBracket().getRounds().size());
+        var match2 = currentMatch(room);
+        allVoteFor(room, match2.getB());
+        service.advanceBracket(room);
+
+        assertEquals(GamePhase.RESULTS, room.getPhase());
+        assertEquals(match2.getB().id(), room.getBracket().getChampion().id());
+    }
+
+    @Test
+    void playAgainIsHostOnlyAndResetsTheRoom() {
+        Room room = gameInBracketPhase("Alice", "Bob", "Carol");
+        allVoteFor(room, currentMatch(room).getA());
+        service.advanceBracket(room);
+        allVoteFor(room, currentMatch(room).getA());
+        service.advanceBracket(room);
+        assertEquals(GamePhase.RESULTS, room.getPhase());
+
+        service.playAgain(room.getRoomCode(), "p2");
+        expectPersonalError("p2", "NOT_HOST");
+        assertEquals(GamePhase.RESULTS, room.getPhase());
+
+        service.playAgain(room.getRoomCode(), "p1");
+        assertEquals(GamePhase.LOBBY, room.getPhase());
+        assertEquals(3, room.presenceCount(), "players stay connected across games");
+        assertTrue(room.getPrompts().isEmpty());
+        assertTrue(room.getDrawings().isEmpty());
+        assertNull(room.getBracket());
+        assertNull(room.getWinningPrompt());
     }
 
     // --- Disconnects mid-phase ---

@@ -51,6 +51,10 @@ public class Room {
     // when the current timed phase ends (null when the phase has no timer)
     private volatile Instant phaseDeadline;
 
+    // --- Phase 3: bracket (mutate only while synchronized on this room) ---
+
+    private volatile Bracket bracket;
+
     public Room(String roomCode) {
         this.roomCode = roomCode;
         this.createdAt = Instant.now();
@@ -76,6 +80,20 @@ public class Room {
     public ConcurrentHashMap<String, Drawing> getDrawings() { return drawings; }
     public Instant getPhaseDeadline() { return phaseDeadline; }
     public void setPhaseDeadline(Instant deadline) { this.phaseDeadline = deadline; }
+    public Bracket getBracket() { return bracket; }
+    public void setBracket(Bracket bracket) { this.bracket = bracket; }
 
     public int presenceCount() { return activeNames.size(); }
+
+    /** Wipe all game progress but keep the connected players ("play again"). */
+    public void resetForNewGame() {
+        prompts.clear();
+        promptBallot = null;
+        promptVotes.clear();
+        winningPrompt = null;
+        drawings.clear();
+        phaseDeadline = null;
+        bracket = null;
+        phase = GamePhase.LOBBY;
+    }
 }

@@ -260,6 +260,80 @@
     #btn-submit-drawing { width: auto; background: #16a34a; color: #fff; }
     #btn-submit-drawing:hover { background: #15803d; }
 
+    /* Bracket voting */
+    .round-badge {
+      background: #7c3aed; color: #fff;
+      font-size: 14px; font-weight: 700;
+      border-radius: 10px;
+      padding: 10px 14px;
+      white-space: nowrap;
+    }
+
+    #bracket-arena {
+      display: flex; align-items: stretch; gap: 12px;
+      margin-top: 4px;
+    }
+
+    .vs {
+      align-self: center;
+      font-weight: 800; font-size: 18px; color: #a1a1aa;
+    }
+
+    .matchup-card {
+      position: relative;
+      flex: 1;
+      display: flex; flex-direction: column; gap: 8px;
+      background: #fafafa;
+      border: 3px solid #e4e4e7;
+      border-radius: 12px;
+      padding: 10px;
+      transition: border-color 0.15s, transform 0.15s, opacity 0.3s;
+    }
+
+    .matchup-card:hover:not(:disabled) { border-color: #7c3aed; transform: translateY(-2px); }
+    .matchup-card:disabled { cursor: default; opacity: 1; transform: none; }
+    .matchup-card.mine { border-style: dashed; }
+    .matchup-card.my-vote { border-color: #7c3aed; }
+    .matchup-card.winner { border-color: #16a34a; box-shadow: 0 0 0 3px rgba(22,163,74,0.25); }
+    .matchup-card.loser { opacity: 0.55; }
+
+    .matchup-card img {
+      width: 100%;
+      border-radius: 8px;
+      background: #fff;
+      display: block;
+    }
+
+    .matchup-caption { font-weight: 600; font-size: 14px; text-align: center; }
+
+    .matchup-tally { position: absolute; top: 14px; right: 14px; background: #16a34a; }
+    .matchup-card.loser .matchup-tally { background: #71717a; }
+
+    .bracket-summary {
+      margin-top: 16px;
+      border-top: 1px solid #e4e4e7;
+      padding-top: 10px;
+      font-size: 13px;
+      color: #52525b;
+    }
+
+    .round-title { font-weight: 700; margin: 8px 0 2px; color: #18181b; }
+    .round-row { padding: 2px 0; }
+    .round-row.bye { font-style: italic; color: #b45309; }
+
+    /* Results */
+    .results-title { text-align: center; font-size: 26px; margin-bottom: 14px; }
+
+    .results-image {
+      width: 100%;
+      border: 3px solid #f59e0b;
+      border-radius: 12px;
+      background: #fff;
+      display: block;
+    }
+
+    .results-caption { text-align: center; font-size: 16px; margin-top: 12px; }
+
     /* Toast for in-game errors */
     #toast {
       position: fixed;
@@ -364,13 +438,32 @@
       <ul id="draw-players"></ul>
     </section>
 
-    <!-- In-game (placeholder until phase UIs land) -->
-    <section id="screen-game" class="hidden">
-      <div id="game-phase"></div>
-      <div id="game-prompt-wrap" class="winning-prompt hidden">
-        “<span id="game-prompt"></span>”
+    <!-- Bracket voting -->
+    <section id="screen-bracket" class="hidden">
+      <div class="draw-header">
+        <div class="winning-prompt">“<span id="bracket-prompt"></span>”</div>
+        <div id="bracket-round" class="round-badge"></div>
       </div>
-      <p class="wait-note">This phase's UI is coming in the next build phase.</p>
+      <div id="bracket-arena"></div>
+      <p id="bracket-status" class="progress-note"></p>
+      <div id="bracket-summary" class="bracket-summary"></div>
+    </section>
+
+    <!-- Results -->
+    <section id="screen-results" class="hidden">
+      <div id="results-champion-wrap">
+        <h2 class="results-title">🏆 Champion!</h2>
+        <img id="results-image" class="results-image" alt="Winning drawing" />
+        <p class="results-caption">
+          <strong id="results-artist"></strong> takes the crown with
+          “<span id="results-prompt"></span>”
+        </p>
+      </div>
+      <p id="results-none" class="wait-note hidden">
+        No drawings made it to the bracket this time. Awkward.
+      </p>
+      <button id="btn-again" class="primary hidden">Play again</button>
+      <p id="results-wait" class="wait-note">Waiting for the host to start a new game…</p>
     </section>
 
     <div id="toast" class="hidden"></div>

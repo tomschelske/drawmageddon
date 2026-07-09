@@ -16,6 +16,9 @@ let drawingSubmitted = false;
 let drawDeadline: number | null = null; // local-clock timestamp
 let drawTimer: number | undefined;
 
+// Bracket phase
+let myMatchVote: { matchId: string; drawingId: string } | null = null;
+
 // --- DOM helpers ---
 
 function el<T extends HTMLElement>(id: string): T {
@@ -24,15 +27,16 @@ function el<T extends HTMLElement>(id: string): T {
   return node as T;
 }
 
-const screens = ['home', 'lobby', 'submit', 'vote', 'draw', 'game'] as const;
+const screens = ['home', 'lobby', 'submit', 'vote', 'draw', 'bracket', 'results'] as const;
 type Screen = (typeof screens)[number];
 
 function showScreen(name: Screen): void {
   for (const s of screens) {
     el(`screen-${s}`).classList.toggle('hidden', s !== name);
   }
-  // The drawing screen needs elbow room; everything else stays compact
-  document.querySelector('.card')?.classList.toggle('wide', name === 'draw');
+  // Canvas and matchup screens need elbow room; everything else stays compact
+  const wide = name === 'draw' || name === 'bracket';
+  document.querySelector('.card')?.classList.toggle('wide', wide);
 }
 
 function setError(message: string): void {
@@ -52,6 +56,8 @@ const ERROR_MESSAGES: Record<string, string> = {
   ALREADY_VOTED: 'You already voted — votes are final!',
   INVALID_VOTE: 'That prompt is not on the ballot.',
   INVALID_DRAWING: 'That drawing could not be submitted.',
+  SELF_VOTE: "You can't vote for your own drawing!",
+  MATCH_CLOSED: 'This matchup has already closed.',
 };
 
 // --- Rendering ---
@@ -216,6 +222,125 @@ function renderDraw(state: RoomStateView, phaseChanged: boolean): void {
   renderPlayerList('draw-players', state, true);
 }
 
+// --- Bracket phase ---
+
+function drawingCard(state: RoomStateView, drawing: { id: string; artist: string; imageData: string }): HTMLElement {
+  const m = state.matchup;
+  if (!m) throw new Error('no matchup');
+  const mine = drawing.artist === myName;
+  const votedThis = myMatchVote?.matchId === m.matchId && myMatchVote.drawingId === drawing.id;
+  const iVoted = me(state)?.done ?? false;
+
+  const card = document.createElement('button');
+  card.className = 'matchup-card';
+  if (mine) card.classList.add('mine');
+  if (votedThis) card.classList.add('my-vote');
+  card.disabled = m.revealed || iVoted || mine;
+
+  const img = document.createElement('img');
+  img.src = drawing.imageData;
+  img.alt = `Drawing by ${drawing.artist}`;
+  card.appendChild(img);
+
+  const caption = document.createElement('span');
+  caption.className = 'matchup-caption';
+  caption.textContent = mine ? `${drawing.artist} (you)` : drawing.artist;
+  card.appendChild(caption);
+
+  if (m.revealed) {
+    const votes = drawing.id === m.a.id ? m.votesA : m.votesB;
+    const badge = document.createElement('span');
+    badge.className = 'tally matchup-tally';
+    badge.textContent = `${votes} vote${votes === 1 ? '' : 's'}`;
+    card.appendChild(badge);
+    if (m.winnerId === drawing.id) card.classList.add('winner');
+    else card.classList.add('loser');
+  }
+
+  if (!m.revealed && !iVoted && !mine) {
+    card.addEventListener('click', () => {
+      myMatchVote = { matchId: m.matchId, drawingId: drawing.id };
+      conn?.send(`/app/room/${roomCode}/matchvote`, { drawingId: drawing.id });
+    });
+  }
+  return card;
+}
+
+function renderBracketSummary(listId: string, state: RoomStateView): void {
+  const box = el(listId);
+  box.innerHTML = '';
+  for (const [i, round] of (state.bracket ?? []).entries()) {
+    const title = document.createElement('div');
+    title.className = 'round-title';
+    title.textContent = `Round ${i + 1}`;
+    box.appendChild(title);
+    for (const match of round.matches) {
+      const row = document.createElement('div');
+      row.className = 'round-row';
+      row.textContent = match.winnerArtist
+        ? `${match.aArtist} vs ${match.bArtist} — ${match.winnerArtist} wins`
+        : `${match.aArtist} vs ${match.bArtist}`;
+      box.appendChild(row);
+    }
+    if (round.byeArtist) {
+      const row = document.createElement('div');
+      row.className = 'round-row bye';
+      row.textContent = `${round.byeArtist} draws a bye and advances`;
+      box.appendChild(row);
+    }
+  }
+}
+
+function renderBracket(state: RoomStateView): void {
+  const m = state.matchup;
+  if (!m) return;
+
+  el('bracket-round').textContent = `Round ${m.round} — Match ${m.matchIndex} of ${m.matchCount}`;
+  el('bracket-prompt').textContent = state.winningPrompt ?? '';
+
+  const arena = el('bracket-arena');
+  arena.innerHTML = '';
+  arena.appendChild(drawingCard(state, m.a));
+  const vs = document.createElement('div');
+  vs.className = 'vs';
+  vs.textContent = 'VS';
+  arena.appendChild(vs);
+  arena.appendChild(drawingCard(state, m.b));
+
+  const status = el('bracket-status');
+  if (m.revealed) {
+    const winner = m.winnerId === m.a.id ? m.a : m.b;
+    status.textContent = m.tieBroken
+      ? `Dead heat! Coin flip says ${winner.artist} advances. Next match in a moment…`
+      : `${winner.artist} advances! Next match in a moment…`;
+  } else {
+    const mine = m.a.artist === myName || m.b.artist === myName;
+    const base = me(state)?.done
+      ? 'Vote locked in. Tallies stay hidden until everyone has voted…'
+      : mine
+        ? 'Your drawing is up! Vote for your favorite — just not your own.'
+        : 'Vote for your favorite!';
+    status.textContent = `${base} (${m.votesIn} of ${state.players.length} votes in)`;
+  }
+
+  renderBracketSummary('bracket-summary', state);
+}
+
+function renderResults(state: RoomStateView): void {
+  const hasChampion = !!state.champion;
+  el('results-champion-wrap').classList.toggle('hidden', !hasChampion);
+  el('results-none').classList.toggle('hidden', hasChampion);
+  if (state.champion) {
+    el<HTMLImageElement>('results-image').src = state.champion.imageData;
+    el('results-artist').textContent = state.champion.artist;
+    el('results-prompt').textContent = state.winningPrompt ?? '';
+  }
+
+  const iAmHost = me(state)?.host ?? false;
+  el('btn-again').classList.toggle('hidden', !iAmHost);
+  el('results-wait').classList.toggle('hidden', iAmHost);
+}
+
 function renderState(state: RoomStateView): void {
   const previousPhase: GamePhase | null = lastState?.phase ?? null;
   const phaseChanged = previousPhase !== state.phase;
@@ -226,6 +351,12 @@ function renderState(state: RoomStateView): void {
   }
   if (phaseChanged && previousPhase === 'DRAWING') {
     stopDrawTimer();
+  }
+  if (phaseChanged && state.phase === 'LOBBY') {
+    // "Play again" reset: clear all per-game local state
+    myVote = null;
+    myMatchVote = null;
+    drawingSubmitted = false;
   }
 
   switch (state.phase) {
@@ -245,12 +376,14 @@ function renderState(state: RoomStateView): void {
       renderDraw(state, phaseChanged);
       showScreen('draw');
       break;
-    default:
-      // BRACKET_VOTING and RESULTS: placeholder until those phases land
-      el('game-phase').textContent = state.phase.replace(/_/g, ' ');
-      el('game-prompt').textContent = state.winningPrompt ?? '';
-      el('game-prompt-wrap').classList.toggle('hidden', !state.winningPrompt);
-      showScreen('game');
+    case 'BRACKET_VOTING':
+      renderBracket(state);
+      showScreen('bracket');
+      break;
+    case 'RESULTS':
+      renderResults(state);
+      showScreen('results');
+      break;
   }
 }
 
@@ -275,6 +408,7 @@ function onPersonalEvent(event: GameEvent): void {
       showScreen('home');
     } else {
       if (event.code === 'INVALID_VOTE' || event.code === 'ALREADY_VOTED') myVote = null;
+      if (event.code === 'SELF_VOTE' || event.code === 'MATCH_CLOSED') myMatchVote = null;
       showToast(message);
     }
   } else if (event.type === 'JOIN_OK' && event.state) {
@@ -418,6 +552,10 @@ function wireUp(): void {
   el('btn-submit-drawing').addEventListener('click', () => {
     stopDrawTimer();
     submitDrawing();
+  });
+
+  el('btn-again').addEventListener('click', () => {
+    conn?.send(`/app/room/${roomCode}/again`);
   });
 }
 

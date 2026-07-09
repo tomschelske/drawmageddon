@@ -35,6 +35,6 @@ Lobby → prompt submission → prompt voting (live tally) → drawing (timer-bo
 - [x] Scaffold: lobby with room codes, join/host flow, game phase state machine
 - [x] Phase 1: prompt submission + live-tally prompt voting with tie-break
 - [x] Phase 2: canvas drawing tool (brush, color, undo, clear) + timed submission
-- [ ] Phase 3: bracket seeding, byes, hidden-until-reveal voting
+- [x] Phase 3: bracket seeding, byes, hidden-until-reveal voting
 - [ ] Phase 4: bracket visualization + results polish
 - [ ] Phase 5: deploy + document

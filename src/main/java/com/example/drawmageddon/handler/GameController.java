@@ -23,6 +23,7 @@ public class GameController {
     public record PromptSubmission(String text) {}
     public record VoteRequest(String promptId) {}
     public record DrawingSubmission(String imageData) {}
+    public record MatchVoteRequest(String drawingId) {}
 
     private final RoomManager roomManager;
     private final GameService gameService;
@@ -87,6 +88,19 @@ public class GameController {
                               DrawingSubmission submission,
                               SimpMessageHeaderAccessor headerAccessor) {
         gameService.submitDrawing(roomCode, principal(headerAccessor), submission.imageData());
+    }
+
+    @MessageMapping("/room/{roomCode}/matchvote")
+    public void voteMatch(@DestinationVariable String roomCode,
+                          MatchVoteRequest vote,
+                          SimpMessageHeaderAccessor headerAccessor) {
+        gameService.voteMatch(roomCode, principal(headerAccessor), vote.drawingId());
+    }
+
+    @MessageMapping("/room/{roomCode}/again")
+    public void playAgain(@DestinationVariable String roomCode,
+                          SimpMessageHeaderAccessor headerAccessor) {
+        gameService.playAgain(roomCode, principal(headerAccessor));
     }
 
     private String principal(SimpMessageHeaderAccessor headerAccessor) {

@@ -32,6 +32,45 @@ export interface RoomStateView {
   winningPrompt?: string;
   /** Time left in the current timed phase, measured at broadcast; count down locally. */
   phaseRemainingMillis?: number;
+  /** Present only during BRACKET_VOTING. */
+  matchup?: MatchupView;
+  /** Bracket overview (no images), present once the bracket is seeded. */
+  bracket?: BracketRoundView[];
+  /** Present during RESULTS; absent when no drawing survived. */
+  champion?: DrawingView;
+}
+
+export interface DrawingView {
+  id: string;
+  artist: string;
+  imageData: string;
+}
+
+export interface MatchupView {
+  matchId: string;
+  round: number;
+  matchIndex: number;
+  matchCount: number;
+  a: DrawingView;
+  b: DrawingView;
+  votesIn: number;
+  revealed: boolean;
+  /** Only present once revealed — tallies are hidden while voting is open. */
+  votesA?: number;
+  votesB?: number;
+  winnerId?: string;
+  tieBroken?: boolean;
+}
+
+export interface BracketMatchSummary {
+  aArtist: string;
+  bArtist: string;
+  winnerArtist?: string;
+}
+
+export interface BracketRoundView {
+  matches: BracketMatchSummary[];
+  byeArtist?: string;
 }
 
 export interface GameEvent {
